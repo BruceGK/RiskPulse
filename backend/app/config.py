@@ -24,7 +24,8 @@ class Settings(BaseSettings):
     fred_api_key: str = ""
     newsapi_api_key: str = ""
     openai_api_key: str = ""
-    openai_model: str = "gpt-4.1-mini"
+    openai_model: str = "gpt-4.1-nano"
+    ai_cache_ttl_seconds: int = 1800
     sec_user_agent: str = "RiskPulse/1.0 support@example.com"
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", case_sensitive=False)

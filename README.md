@@ -10,7 +10,7 @@ Azure-ready portfolio + macro analysis MVP.
   - in-memory TTL cache for prices, history, macro series, and news to reduce API quota pressure
   - free-tier safeguards (Alpha Vantage call cap and graceful throttling fallback)
   - SEC filing hints for top holdings
-  - optional OpenAI summary (if `OPENAI_API_KEY` set)
+  - optional low-cost OpenAI "Market Pulse" intelligence (cached to reduce repeated token spend)
 - `frontend/`: Next.js app
   - `/portfolio` position entry
   - `/analysis` dashboard rendering API output
@@ -122,4 +122,5 @@ Optional runtime secrets for backend (store in Container App / Key Vault, not in
 - `FRED_API_KEY`
 - `NEWSAPI_API_KEY`
 - `OPENAI_API_KEY`
+- `OPENAI_MODEL` (recommended low-cost default: `gpt-4.1-nano`)
 - `SEC_USER_AGENT`

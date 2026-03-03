@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 from typing import Any
@@ -7,6 +8,9 @@ from typing import Any
 import httpx
 
 from app.config import Settings
+from app.providers.cache import TTLCache
+
+_AI_CACHE = TTLCache[dict[str, Any]](max_size=1200)
 
 
 class AiProvider:
@@ -16,6 +20,12 @@ class AiProvider:
     async def build_intelligence(self, payload: dict[str, Any]) -> dict[str, Any] | None:
         if not self.settings.openai_api_key:
             return None
+        payload_str = json.dumps(payload, sort_keys=True, default=str)
+        payload_hash = hashlib.sha256(payload_str.encode("utf-8")).hexdigest()[:24]
+        cache_key = f"ai:intel:{self.settings.openai_model}:{payload_hash}"
+        cached = _AI_CACHE.get(cache_key)
+        if cached is not None:
+            return cached
 
         system_prompt = (
             "You are a portfolio risk analyst. Return ONLY valid JSON with keys: "
@@ -24,7 +34,7 @@ class AiProvider:
         )
         user_prompt = (
             "Analyze this portfolio snapshot and distill the most relevant risk posture.\n"
-            f"JSON input:\n{json.dumps(payload, default=str)}"
+            f"JSON input:\n{payload_str}"
         )
         body = {
             "model": self.settings.openai_model,
@@ -57,7 +67,9 @@ class AiProvider:
             if not isinstance(focus, list):
                 focus = []
             clean_focus = [item.strip() for item in focus if isinstance(item, str) and item.strip()][:3]
-            return {"thesis": thesis.strip(), "stance": stance, "focus": clean_focus}
+            out = {"thesis": thesis.strip(), "stance": stance, "focus": clean_focus}
+            _AI_CACHE.set(cache_key, out, ttl_seconds=self.settings.ai_cache_ttl_seconds)
+            return out
         except Exception:
             return None
 
