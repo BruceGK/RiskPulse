@@ -1723,13 +1723,13 @@ def _valuation_intel(openbb: dict[str, Any], current_price: float | None) -> dic
                 "methods": [{"name": "multiples_heuristic", "value": round(fair_value, 2), "weight": 0.12, "impliedUpside": round(margin_safety, 4)}],
             }
         return {
-            "fairValue": None,
+            "fairValue": round(price, 2),
             "marginSafety": 0.0,
-            "verdict": "unknown",
-            "confidence": 0.0,
+            "verdict": "fair",
+            "confidence": 0.05,
             "undervaluationScore": 0.5,
             "overvaluationScore": 0.5,
-            "methods": [],
+            "methods": [{"name": "price_anchor_no_fundamental", "value": round(price, 2), "weight": 0.01, "impliedUpside": 0.0}],
         }
 
     fair_value = weighted_value / method_weights

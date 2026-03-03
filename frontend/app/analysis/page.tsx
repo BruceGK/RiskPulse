@@ -763,6 +763,7 @@ export default function AnalysisPage() {
                               <th>Ticker</th>
                               <th>Action</th>
                               <th>Value View</th>
+                              <th>Val Inputs</th>
                               <th>Fair Value</th>
                               <th>MoS</th>
                               <th>Opportunity</th>
@@ -781,15 +782,19 @@ export default function AnalysisPage() {
                               const panic = asNumber(row.panicScore);
                               const crowding = asNumber(row.crowdingScore);
                               const valuation = asRecord(row.valuation);
+                              const openbb = asRecord(row.openbb);
+                              const coverage = asRecord(openbb?.coverage);
                               const fairValue = asNumber(valuation?.fairValue);
                               const marginSafety = asNumber(valuation?.marginSafety);
                               const valueView = typeof valuation?.verdict === "string" ? valuation.verdict : "-";
+                              const valInputs = asNumber(coverage?.valuationInputs);
                               const themes = asStringArray(row.themes).slice(0, 2).join(", ") || "-";
                               return (
                                 <tr key={`${ticker}-${idx}`}>
                                   <td className="mono">{ticker}</td>
                                   <td>{action}</td>
                                   <td>{valueView}</td>
+                                  <td>{valInputs === null ? "-" : valInputs.toFixed(0)}</td>
                                   <td>{money(fairValue)}</td>
                                   <td className={marginSafety !== null && marginSafety < 0 ? "neg" : "pos"}>{pct(marginSafety)}</td>
                                   <td>{pct(opportunity)}</td>
