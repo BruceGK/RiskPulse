@@ -35,8 +35,9 @@ class MarketProvider:
 
         pending = await self._merge_quotes(out, pending, self._fetch_polygon_quotes)
         pending = await self._merge_quotes(out, pending, self._fetch_fmp_quotes)
-        pending = await self._merge_quotes(out, pending, self._fetch_alpha_vantage_quotes)
+        # Preserve Alpha Vantage quota for news fallback on free-tier setups.
         pending = await self._merge_quotes(out, pending, self._fetch_yahoo_quotes)
+        pending = await self._merge_quotes(out, pending, self._fetch_alpha_vantage_quotes)
 
         for ticker in pending:
             _MISS_CACHE.set(f"quote:{ticker}", True, ttl_seconds=90)
@@ -53,8 +54,8 @@ class MarketProvider:
         fetchers = (
             self._fetch_polygon_history,
             self._fetch_fmp_history,
-            self._fetch_alpha_vantage_history,
             self._fetch_yahoo_history,
+            self._fetch_alpha_vantage_history,
         )
         for fetcher in fetchers:
             history = await fetcher(ticker, days)
@@ -131,9 +132,10 @@ class MarketProvider:
         symbols = ",".join(tickers)
         url = "https://query1.finance.yahoo.com/v7/finance/quote"
         params = {"symbols": symbols}
+        headers = {"User-Agent": "Mozilla/5.0 RiskPulse/1.0", "Accept": "application/json"}
         try:
             async with httpx.AsyncClient(timeout=self.settings.request_timeout_seconds) as client:
-                resp = await client.get(url, params=params)
+                resp = await client.get(url, params=params, headers=headers)
                 resp.raise_for_status()
                 data = resp.json().get("quoteResponse", {}).get("result", [])
             out: dict[str, Quote] = {}
@@ -223,9 +225,10 @@ class MarketProvider:
         start = int((datetime.now(tz=UTC) - timedelta(days=max(days * 2, 180))).timestamp())
         url = f"https://query1.finance.yahoo.com/v8/finance/chart/{ticker}"
         params = {"period1": start, "period2": end, "interval": "1d", "events": "history"}
+        headers = {"User-Agent": "Mozilla/5.0 RiskPulse/1.0", "Accept": "application/json"}
         try:
             async with httpx.AsyncClient(timeout=self.settings.request_timeout_seconds) as client:
-                resp = await client.get(url, params=params)
+                resp = await client.get(url, params=params, headers=headers)
                 resp.raise_for_status()
                 results = resp.json().get("chart", {}).get("result", [])
             if not results:

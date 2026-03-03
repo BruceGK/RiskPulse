@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import xml.etree.ElementTree as ET
 from urllib.parse import quote_plus
 
 import httpx
@@ -26,6 +27,8 @@ class NewsProvider:
             items = await self._alpha_vantage_ticker_news(ticker, limit)
         if not items:
             items = await self._newsapi_ticker_news(ticker, limit)
+        if not items:
+            items = await self._google_news_ticker_news(ticker, limit)
 
         _NEWS_CACHE.set(cache_key, items, ttl_seconds=self.settings.news_cache_ttl_seconds)
         return items
@@ -41,6 +44,8 @@ class NewsProvider:
             items = await self._alpha_vantage_macro_news(limit)
         if not items:
             items = await self._newsapi_macro_news(limit)
+        if not items:
+            items = await self._google_news_macro_news(limit)
 
         _NEWS_CACHE.set(cache_key, items, ttl_seconds=self.settings.news_cache_ttl_seconds)
         return items
@@ -173,6 +178,54 @@ class NewsProvider:
             return out
         except Exception:
             return []
+
+    async def _google_news_ticker_news(self, ticker: str, limit: int) -> list[NewsItem]:
+        query = f"{ticker} stock"
+        return await self._google_news_search(query, limit)
+
+    async def _google_news_macro_news(self, limit: int) -> list[NewsItem]:
+        query = "federal reserve OR inflation OR treasury yield OR dollar index OR vix"
+        return await self._google_news_search(query, limit)
+
+    async def _google_news_search(self, query: str, limit: int) -> list[NewsItem]:
+        url = (
+            "https://news.google.com/rss/search"
+            f"?q={quote_plus(query)}&hl=en-US&gl=US&ceid=US:en"
+        )
+        headers = {"User-Agent": "Mozilla/5.0 RiskPulse/1.0", "Accept": "application/rss+xml, application/xml"}
+        try:
+            async with httpx.AsyncClient(timeout=self.settings.request_timeout_seconds) as client:
+                resp = await client.get(url, headers=headers)
+                resp.raise_for_status()
+            root = ET.fromstring(resp.text)
+        except Exception:
+            return []
+
+        out: list[NewsItem] = []
+        channel = root.find("./channel")
+        if channel is None:
+            return out
+
+        for item in channel.findall("item")[:limit]:
+            title = (item.findtext("title") or "").strip()
+            link = (item.findtext("link") or "").strip()
+            pub_date = (item.findtext("pubDate") or "").strip()
+            source = "Google News"
+            source_node = item.find("source")
+            if source_node is not None and source_node.text:
+                source = source_node.text.strip()
+            if not title or not link:
+                continue
+            out.append(
+                NewsItem(
+                    source=source,
+                    title=title,
+                    url=link,
+                    published_at=pub_date or None,
+                    sentiment_hint=None,
+                )
+            )
+        return out
 
     @staticmethod
     def _polygon_row_to_item(row: dict) -> NewsItem:

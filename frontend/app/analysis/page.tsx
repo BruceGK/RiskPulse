@@ -74,6 +74,13 @@ export default function AnalysisPage() {
   }, [positions, refreshTick]);
 
   const topHeadlines = useMemo(() => analysis?.news?.macro?.slice(0, 6) || [], [analysis]);
+  const tickerHeadlineGroups = useMemo(() => {
+    if (!analysis?.news) return [] as Array<{ ticker: string; items: NonNullable<AnalysisResponse["news"]>[string] }>;
+    return Object.entries(analysis.news)
+      .filter(([key, value]) => key !== "macro" && key !== "sec" && Array.isArray(value) && value.length > 0)
+      .map(([ticker, items]) => ({ ticker, items }));
+  }, [analysis]);
+  const secHeadlines = useMemo(() => analysis?.news?.sec || [], [analysis]);
   const topPositions = useMemo(() => analysis?.positions?.slice(0, 5) || [], [analysis]);
   const dataQuality = (analysis?.meta?.dataQuality ||
     null) as null | { score?: number; label?: string; priceCoverage?: number; macroCoverage?: number; macroNewsCount?: number };
@@ -251,6 +258,55 @@ export default function AnalysisPage() {
               <div className="headlines" style={{ marginTop: 8 }}>
                 {topHeadlines.map((item) => (
                   <a className="headline" key={`${item.url}-${item.published_at}`} href={item.url} target="_blank" rel="noreferrer">
+                    <div className="headline-title">{item.title}</div>
+                    <div className="headline-meta">
+                      {item.source}
+                      {item.published_at ? ` · ${item.published_at.slice(0, 10)}` : ""}
+                    </div>
+                  </a>
+                ))}
+              </div>
+            )}
+          </section>
+
+          <section className="panel" style={{ marginTop: 14 }}>
+            <h3>Ticker Headlines</h3>
+            {tickerHeadlineGroups.length === 0 ? (
+              <div className="status" style={{ marginTop: 8 }}>
+                No ticker-specific headlines were available in this run.
+              </div>
+            ) : (
+              <div className="grid two" style={{ marginTop: 8 }}>
+                {tickerHeadlineGroups.map(({ ticker, items }) => (
+                  <div key={ticker}>
+                    <h4 style={{ margin: "0 0 8px 0" }}>{ticker}</h4>
+                    <div className="headlines">
+                      {items.slice(0, 4).map((item) => (
+                        <a className="headline" key={`${item.url}-${item.published_at}`} href={item.url} target="_blank" rel="noreferrer">
+                          <div className="headline-title">{item.title}</div>
+                          <div className="headline-meta">
+                            {item.source}
+                            {item.published_at ? ` · ${item.published_at.slice(0, 16)}` : ""}
+                          </div>
+                        </a>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </section>
+
+          <section className="panel" style={{ marginTop: 14 }}>
+            <h3>Recent SEC Filings</h3>
+            {secHeadlines.length === 0 ? (
+              <div className="status" style={{ marginTop: 8 }}>
+                No recent SEC filings were available in this run.
+              </div>
+            ) : (
+              <div className="headlines" style={{ marginTop: 8 }}>
+                {secHeadlines.map((item) => (
+                  <a className="headline" key={`${item.title}-${item.published_at}`} href={item.url} target="_blank" rel="noreferrer">
                     <div className="headline-title">{item.title}</div>
                     <div className="headline-meta">
                       {item.source}
