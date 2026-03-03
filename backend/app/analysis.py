@@ -98,6 +98,7 @@ class AnalysisService:
                 "newsapi_enabled": bool(self.settings.newsapi_api_key),
                 "fmp_enabled": bool(self.settings.fmp_api_key),
                 "alpha_vantage_enabled": bool(self.settings.alpha_vantage_api_key),
+                "yahoo_enabled": True,
                 "openai_enabled": bool(self.settings.openai_api_key),
             },
             "quoteSources": quote_sources,
