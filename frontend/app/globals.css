@@ -142,6 +142,71 @@ a {
   border: 1px solid rgba(255, 255, 255, 0.2);
 }
 
+.pulse {
+  border: 1px solid #d7e0ef;
+  border-radius: 14px;
+  background:
+    linear-gradient(128deg, rgba(11, 42, 79, 0.94), rgba(14, 76, 135, 0.92)),
+    #113662;
+  color: #f1f7ff;
+  padding: 14px 16px;
+  margin-bottom: 14px;
+  animation: reveal 0.58s ease;
+}
+
+.pulse-label {
+  font-size: 0.72rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  opacity: 0.82;
+}
+
+.pulse-row {
+  margin-top: 7px;
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 12px;
+  align-items: center;
+}
+
+.pulse-text {
+  line-height: 1.4;
+  font-size: 0.95rem;
+}
+
+.pulse-focus {
+  margin-top: 10px;
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.pulse .chip {
+  background: rgba(255, 255, 255, 0.14);
+  border-color: rgba(255, 255, 255, 0.24);
+  color: #f1f7ff;
+}
+
+.stance {
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  border-radius: 999px;
+  padding: 6px 9px;
+  border: 1px solid rgba(255, 255, 255, 0.28);
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.stance.risk-on {
+  border-color: rgba(47, 201, 135, 0.5);
+  color: #b5f7d7;
+}
+
+.stance.risk-off {
+  border-color: rgba(255, 145, 145, 0.5);
+  color: #ffd3d3;
+}
+
 .grid {
   display: grid;
   gap: 14px;
@@ -427,6 +492,11 @@ tbody tr:hover {
 
   .hero h1 {
     font-size: 1.5rem;
+  }
+
+  .pulse-row {
+    grid-template-columns: 1fr;
+    gap: 8px;
   }
 
   th,

@@ -80,7 +80,7 @@ class AnalysisService:
                 f"Risk metrics computed on top {self.settings.max_positions_for_risk} holdings by market value."
             )
         data_quality = self._build_data_quality(req, position_rows, macro, news)
-        ai_summary = await self.ai.summarize(
+        intelligence = await self.ai.build_intelligence(
             {
                 "asOf": date.today().isoformat(),
                 "portfolioValue": round(portfolio_value, 2),
@@ -91,8 +91,20 @@ class AnalysisService:
                 "macroNews": [h.model_dump() for h in news.get("macro", [])[:6]],
             }
         )
-        if ai_summary:
-            notes.append(f"AI summary: {ai_summary}")
+        meta_payload: dict = {
+            "providers": {
+                "polygon_enabled": bool(self.settings.polygon_api_key),
+                "fred_enabled": bool(self.settings.fred_api_key),
+                "newsapi_enabled": bool(self.settings.newsapi_api_key),
+                "fmp_enabled": bool(self.settings.fmp_api_key),
+                "alpha_vantage_enabled": bool(self.settings.alpha_vantage_api_key),
+                "openai_enabled": bool(self.settings.openai_api_key),
+            },
+            "quoteSources": quote_sources,
+            "dataQuality": data_quality,
+        }
+        if intelligence:
+            meta_payload["intelligence"] = intelligence
 
         return AnalysisResponse(
             as_of=date.today(),
@@ -103,18 +115,7 @@ class AnalysisService:
             macro=macro,
             news=news,
             notes=notes,
-            meta={
-                "providers": {
-                    "polygon_enabled": bool(self.settings.polygon_api_key),
-                    "fred_enabled": bool(self.settings.fred_api_key),
-                    "newsapi_enabled": bool(self.settings.newsapi_api_key),
-                    "fmp_enabled": bool(self.settings.fmp_api_key),
-                    "alpha_vantage_enabled": bool(self.settings.alpha_vantage_api_key),
-                    "openai_enabled": bool(self.settings.openai_api_key),
-                },
-                "quoteSources": quote_sources,
-                "dataQuality": data_quality,
-            },
+            meta=meta_payload,
         )
 
     async def _compute_risk(self, positions: list[PositionAnalysis]) -> dict[str, float | None]:

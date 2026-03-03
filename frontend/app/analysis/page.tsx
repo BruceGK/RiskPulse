@@ -30,6 +30,11 @@ function asRecord(value: unknown): Record<string, unknown> | null {
   return value as Record<string, unknown>;
 }
 
+function asStringArray(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value.filter((item): item is string => typeof item === "string" && item.trim().length > 0);
+}
+
 export default function AnalysisPage() {
   const [positions, setPositions] = useState<Position[]>([]);
   const [analysis, setAnalysis] = useState<AnalysisResponse | null>(null);
@@ -85,8 +90,13 @@ export default function AnalysisPage() {
   const dataQuality = (analysis?.meta?.dataQuality ||
     null) as null | { score?: number; label?: string; priceCoverage?: number; macroCoverage?: number; macroNewsCount?: number };
   const quoteSources = (analysis?.meta?.quoteSources || null) as null | Record<string, string>;
-  const providers = asRecord(analysis?.meta?.providers);
+  const meta = asRecord(analysis?.meta);
+  const providers = asRecord(meta?.providers);
   const providerEntries = providers ? Object.entries(providers) : [];
+  const intelligence = asRecord(meta?.intelligence);
+  const pulseThesis = typeof intelligence?.thesis === "string" ? intelligence.thesis : "";
+  const pulseStance = intelligence?.stance === "risk-on" || intelligence?.stance === "risk-off" ? intelligence.stance : "balanced";
+  const pulseFocus = asStringArray(intelligence?.focus).slice(0, 3);
 
   return (
     <main className="container">
@@ -116,6 +126,25 @@ export default function AnalysisPage() {
           </div>
         )}
       </section>
+
+      {analysis && pulseThesis && (
+        <section className="pulse">
+          <div className="pulse-label">Market Pulse</div>
+          <div className="pulse-row">
+            <p className="pulse-text">{pulseThesis}</p>
+            <span className={`stance ${pulseStance}`}>{pulseStance.replace("-", " ")}</span>
+          </div>
+          {pulseFocus.length > 0 && (
+            <div className="pulse-focus">
+              {pulseFocus.map((item) => (
+                <span className="chip" key={item}>
+                  {item}
+                </span>
+              ))}
+            </div>
+          )}
+        </section>
+      )}
 
       {loading && <div className="status">Running analysis against live providers...</div>}
       {error && <div className="status error">{error}</div>}
