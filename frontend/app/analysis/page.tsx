@@ -35,12 +35,22 @@ function asStringArray(value: unknown): string[] {
   return value.filter((item): item is string => typeof item === "string" && item.trim().length > 0);
 }
 
+function asRecordArray(value: unknown): Record<string, unknown>[] {
+  if (!Array.isArray(value)) return [];
+  return value.filter((item): item is Record<string, unknown> => !!item && typeof item === "object" && !Array.isArray(item));
+}
+
+function asNumber(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
 export default function AnalysisPage() {
   const [positions, setPositions] = useState<Position[]>([]);
   const [analysis, setAnalysis] = useState<AnalysisResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [refreshTick, setRefreshTick] = useState(0);
+  const [activeScenario, setActiveScenario] = useState("");
 
   useEffect(() => {
     const raw = localStorage.getItem(STORAGE_KEY);
@@ -93,10 +103,31 @@ export default function AnalysisPage() {
   const meta = asRecord(analysis?.meta);
   const providers = asRecord(meta?.providers);
   const providerEntries = providers ? Object.entries(providers) : [];
-  const intelligence = asRecord(meta?.intelligence);
+  const signals = asRecord(meta?.signals);
+  const intelligence = asRecord(meta?.intelligence) || asRecord(signals?.pulse);
   const pulseThesis = typeof intelligence?.thesis === "string" ? intelligence.thesis : "";
   const pulseStance = intelligence?.stance === "risk-on" || intelligence?.stance === "risk-off" ? intelligence.stance : "balanced";
   const pulseFocus = asStringArray(intelligence?.focus).slice(0, 3);
+  const warnings = asRecordArray(signals?.warnings);
+  const watchouts = asRecordArray(signals?.watchouts);
+  const radar = asRecordArray(signals?.radar);
+  const scenarios = asRecordArray(signals?.scenarios);
+
+  useEffect(() => {
+    if (!scenarios.length) {
+      setActiveScenario("");
+      return;
+    }
+    const ids = scenarios
+      .map((row) => (typeof row.id === "string" ? row.id : ""))
+      .filter((id) => id.length > 0);
+    if (ids.length && !ids.includes(activeScenario)) {
+      setActiveScenario(ids[0]);
+    }
+  }, [scenarios, activeScenario]);
+
+  const selectedScenario = scenarios.find((row) => row.id === activeScenario) || scenarios[0] || null;
+  const scenarioExposed = selectedScenario ? asRecordArray(selectedScenario.exposed) : [];
 
   return (
     <main className="container">
@@ -143,6 +174,28 @@ export default function AnalysisPage() {
               ))}
             </div>
           )}
+        </section>
+      )}
+
+      {analysis && warnings.length > 0 && (
+        <section className="panel warning-panel">
+          <h3>Warning Board</h3>
+          <div className="warning-list">
+            {warnings.map((row, idx) => {
+              const title = typeof row.title === "string" ? row.title : "Warning";
+              const severity = row.severity === "high" || row.severity === "low" ? row.severity : "medium";
+              const reason = typeof row.reason === "string" ? row.reason : "";
+              return (
+                <div className={`warning-item ${severity}`} key={`${title}-${idx}`}>
+                  <div className="warning-head">
+                    <strong>{title}</strong>
+                    <span className={`severity ${severity}`}>{severity}</span>
+                  </div>
+                  {reason && <div className="warning-reason">{reason}</div>}
+                </div>
+              );
+            })}
+          </div>
         </section>
       )}
 
@@ -201,6 +254,89 @@ export default function AnalysisPage() {
                     </span>
                 ))}
               </div>
+            </article>
+          </section>
+
+          <section className="grid two" style={{ marginTop: 14 }}>
+            <article className="panel">
+              <h3>Scenario Lens</h3>
+              <div className="scenario-tabs">
+                {scenarios.map((row) => {
+                  const id = typeof row.id === "string" ? row.id : "";
+                  const name = typeof row.name === "string" ? row.name : id;
+                  if (!id) return null;
+                  return (
+                    <button
+                      key={id}
+                      className={`scenario-tab ${id === activeScenario ? "active" : ""}`}
+                      onClick={() => setActiveScenario(id)}
+                      type="button"
+                    >
+                      {name}
+                    </button>
+                  );
+                })}
+              </div>
+              {selectedScenario ? (
+                <div className="scenario-body">
+                  <div className="scenario-metrics">
+                    <div>
+                      <div className="kpi-label">Shock</div>
+                      <div>{typeof selectedScenario.shock === "string" ? selectedScenario.shock : "-"}</div>
+                    </div>
+                    <div>
+                      <div className="kpi-label">Estimated Portfolio Impact</div>
+                      <div
+                        className={`scenario-impact ${
+                          (asNumber(selectedScenario.portfolioImpactPct) || 0) < 0 ? "neg" : "pos"
+                        }`}
+                      >
+                        {pct(asNumber(selectedScenario.portfolioImpactPct))}
+                      </div>
+                    </div>
+                  </div>
+                  <div className="notes" style={{ marginTop: 10 }}>
+                    {scenarioExposed.map((row) => {
+                      const ticker = typeof row.ticker === "string" ? row.ticker : "-";
+                      const weight = asNumber(row.weight);
+                      const sens = asNumber(row.sensitivity);
+                      return (
+                        <div className="note" key={`${activeScenario}-${ticker}`}>
+                          <strong>{ticker}</strong> weight {pct(weight)} · sensitivity {sens?.toFixed(2) ?? "-"}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              ) : (
+                <div className="status" style={{ marginTop: 8 }}>
+                  Scenario engine unavailable for this run.
+                </div>
+              )}
+            </article>
+
+            <article className="panel">
+              <h3>Position Watchouts</h3>
+              {watchouts.length === 0 ? (
+                <div className="status">No watchouts available in this run.</div>
+              ) : (
+                <div className="watchout-list">
+                  {watchouts.map((row, idx) => {
+                    const ticker = typeof row.ticker === "string" ? row.ticker : "-";
+                    const severity = row.severity === "high" || row.severity === "low" ? row.severity : "medium";
+                    const text = typeof row.text === "string" ? row.text : "";
+                    return (
+                      <div className={`watchout-item ${severity}`} key={`${ticker}-${idx}`}>
+                        <div className="warning-head">
+                          <strong>{ticker}</strong>
+                          <span className={`severity ${severity}`}>{severity}</span>
+                        </div>
+                        <div className="watchout-text">{text}</div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
             </article>
           </section>
 
@@ -275,6 +411,53 @@ export default function AnalysisPage() {
                 ))}
               </div>
             </article>
+          </section>
+
+          <section className="panel" style={{ marginTop: 14 }}>
+            <h3>Headline Impact Radar</h3>
+            {radar.length === 0 ? (
+              <div className="status" style={{ marginTop: 8 }}>
+                Headline scoring unavailable in this run.
+              </div>
+            ) : (
+              <div className="headlines radar-list" style={{ marginTop: 8 }}>
+                {radar.map((row, idx) => {
+                  const title = typeof row.title === "string" ? row.title : "";
+                  const source = typeof row.source === "string" ? row.source : "Signal";
+                  const url = typeof row.url === "string" ? row.url : "";
+                  const publishedAt = typeof row.publishedAt === "string" ? row.publishedAt : "";
+                  const impact = row.impact === "high" || row.impact === "low" ? row.impact : "medium";
+                  const direction = row.direction === "risk-up" || row.direction === "risk-down" ? row.direction : "neutral";
+                  const horizon = row.horizon === "intraday" || row.horizon === "1m" ? row.horizon : "1w";
+                  const related = asStringArray(row.relatedTickers);
+                  return (
+                    <a
+                      className="headline radar-item"
+                      key={`${title}-${idx}`}
+                      href={url || "#"}
+                      target={url ? "_blank" : undefined}
+                      rel={url ? "noreferrer" : undefined}
+                    >
+                      <div className="radar-tags">
+                        <span className={`severity ${impact}`}>{impact}</span>
+                        <span className={`dir ${direction}`}>{direction}</span>
+                        <span className="chip">{horizon}</span>
+                        {related.map((ticker) => (
+                          <span className="chip" key={`${title}-${ticker}`}>
+                            {ticker}
+                          </span>
+                        ))}
+                      </div>
+                      <div className="headline-title">{title}</div>
+                      <div className="headline-meta">
+                        {source}
+                        {publishedAt ? ` · ${publishedAt.slice(0, 16)}` : ""}
+                      </div>
+                    </a>
+                  );
+                })}
+              </div>
+            )}
           </section>
 
           <section className="panel" style={{ marginTop: 14 }}>

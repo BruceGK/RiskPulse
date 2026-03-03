@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import asyncio
 import math
+import re
 from datetime import date
 from statistics import mean
+from typing import Any
 
 from app.config import Settings
 from app.models import AnalysisRequest, AnalysisResponse, Headline, MacroPoint, PositionAnalysis
@@ -80,17 +82,25 @@ class AnalysisService:
                 f"Risk metrics computed on top {self.settings.max_positions_for_risk} holdings by market value."
             )
         data_quality = self._build_data_quality(req, position_rows, macro, news)
-        intelligence = await self.ai.build_intelligence(
+        deterministic_signals = self._build_signals(position_rows, notes, news, risk, macro)
+        ai_signals = await self.ai.build_signals(
             {
                 "asOf": date.today().isoformat(),
                 "portfolioValue": round(portfolio_value, 2),
                 "positions": [p.model_dump() for p in position_rows[:8]],
                 "risk": risk,
                 "macro": {k: v.model_dump() for k, v in macro.items()},
-                "notes": notes,
-                "macroNews": [h.model_dump() for h in news.get("macro", [])[:6]],
+                "notes": notes[:6],
+                "macroNews": [h.model_dump() for h in news.get("macro", [])[:8]],
+                "tickerNews": {
+                    ticker: [h.model_dump() for h in items[:3]]
+                    for ticker, items in news.items()
+                    if ticker not in {"macro", "sec"}
+                },
+                "signalsDraft": deterministic_signals,
             }
         )
+        signals = self._merge_signals(deterministic_signals, ai_signals)
         meta_payload: dict = {
             "providers": {
                 "polygon_enabled": bool(self.settings.polygon_api_key),
@@ -103,9 +113,11 @@ class AnalysisService:
             },
             "quoteSources": quote_sources,
             "dataQuality": data_quality,
+            "signals": signals,
         }
-        if intelligence:
-            meta_payload["intelligence"] = intelligence
+        pulse = signals.get("pulse")
+        if isinstance(pulse, dict):
+            meta_payload["intelligence"] = pulse
 
         return AnalysisResponse(
             as_of=date.today(),
@@ -208,6 +220,297 @@ class AnalysisService:
 
         return result
 
+    def _build_signals(
+        self,
+        positions: list[PositionAnalysis],
+        notes: list[str],
+        news: dict[str, list[Headline]],
+        risk: dict[str, float | None],
+        macro: dict[str, MacroPoint],
+    ) -> dict[str, Any]:
+        top_tickers = [p.ticker for p in positions[:5]]
+        radar = self._build_headline_radar(news, top_tickers)
+        watchouts = self._build_watchouts(positions, radar)
+        scenarios = self._build_scenarios(positions)
+        warnings = self._build_warnings(notes, risk, macro, radar, scenarios)
+        pulse = _build_pulse(warnings, scenarios)
+        return {
+            "pulse": pulse,
+            "warnings": warnings,
+            "watchouts": watchouts,
+            "radar": radar,
+            "scenarios": scenarios,
+        }
+
+    def _build_headline_radar(self, news: dict[str, list[Headline]], top_tickers: list[str]) -> list[dict[str, Any]]:
+        entries: list[dict[str, Any]] = []
+        seen: set[str] = set()
+        macro_headlines = news.get("macro", [])[:10]
+        for item in macro_headlines:
+            title_key = item.title.strip().lower()
+            if not item.title or title_key in seen:
+                continue
+            seen.add(title_key)
+            impact, direction, horizon = _classify_headline(item.title)
+            entries.append(
+                {
+                    "title": item.title,
+                    "source": item.source,
+                    "url": item.url,
+                    "publishedAt": item.published_at,
+                    "impact": impact,
+                    "direction": direction,
+                    "horizon": horizon,
+                    "relatedTickers": _extract_related_tickers(item.title, top_tickers),
+                }
+            )
+
+        for ticker in top_tickers[:3]:
+            for item in news.get(ticker, [])[:3]:
+                title_key = item.title.strip().lower()
+                if not item.title or title_key in seen:
+                    continue
+                seen.add(title_key)
+                impact, direction, horizon = _classify_headline(item.title, sentiment_hint=item.sentiment_hint)
+                entries.append(
+                    {
+                        "title": item.title,
+                        "source": item.source,
+                        "url": item.url,
+                        "publishedAt": item.published_at,
+                        "impact": impact,
+                        "direction": direction,
+                        "horizon": horizon,
+                        "relatedTickers": [ticker],
+                    }
+                )
+
+        entries.sort(key=lambda row: (_impact_score(row["impact"]), row["direction"] == "risk-up"), reverse=True)
+        return entries[:14]
+
+    def _build_watchouts(self, positions: list[PositionAnalysis], radar: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        out: list[dict[str, Any]] = []
+        for p in positions[:10]:
+            severity_rank = 0
+            reasons: list[str] = []
+            if p.weight >= 0.35:
+                severity_rank = max(severity_rank, 2)
+                reasons.append(f"Concentration is high at {p.weight:.0%}.")
+            elif p.weight >= 0.2:
+                severity_rank = max(severity_rank, 1)
+                reasons.append(f"Portfolio weight is material at {p.weight:.0%}.")
+
+            if p.chg_pct_1d is not None and abs(p.chg_pct_1d) >= 0.03:
+                severity_rank = max(severity_rank, 1 if abs(p.chg_pct_1d) < 0.05 else 2)
+                reasons.append(f"One-day move is {p.chg_pct_1d:+.2%}.")
+
+            risk_up_hits = sum(
+                1
+                for row in radar
+                if p.ticker in row.get("relatedTickers", [])
+                and row.get("direction") == "risk-up"
+                and row.get("impact") in {"medium", "high"}
+            )
+            if risk_up_hits >= 2:
+                severity_rank = max(severity_rank, 2)
+                reasons.append("Multiple risk-up headlines are linked to this ticker.")
+            elif risk_up_hits == 1:
+                severity_rank = max(severity_rank, 1)
+                reasons.append("Recent headline flow adds short-term uncertainty.")
+
+            severity = _severity_from_rank(severity_rank)
+            text = " ".join(reasons[:2]) if reasons else "No acute pressure signals in this run."
+            out.append(
+                {
+                    "ticker": p.ticker,
+                    "severity": severity,
+                    "text": text,
+                }
+            )
+        return out
+
+    def _build_scenarios(self, positions: list[PositionAnalysis]) -> list[dict[str, Any]]:
+        out: list[dict[str, Any]] = []
+        for scenario in _SCENARIOS:
+            exposures: list[dict[str, Any]] = []
+            impact = 0.0
+            for p in positions:
+                sensitivity = _scenario_sensitivity(p.ticker, scenario["id"])
+                contribution = p.weight * sensitivity
+                impact += contribution
+                exposures.append(
+                    {
+                        "ticker": p.ticker,
+                        "weight": round(p.weight, 4),
+                        "sensitivity": round(sensitivity, 3),
+                        "contribution": round(contribution, 4),
+                    }
+                )
+
+            impact_pct = impact * scenario["scalar"]
+            exposures.sort(key=lambda row: abs(row["contribution"]), reverse=True)
+            out.append(
+                {
+                    "id": scenario["id"],
+                    "name": scenario["name"],
+                    "shock": scenario["shock"],
+                    "portfolioImpactPct": round(impact_pct, 4),
+                    "direction": "risk-up" if impact_pct < 0 else "risk-down",
+                    "exposed": exposures[:3],
+                }
+            )
+        return out
+
+    @staticmethod
+    def _build_warnings(
+        notes: list[str],
+        risk: dict[str, float | None],
+        macro: dict[str, MacroPoint],
+        radar: list[dict[str, Any]],
+        scenarios: list[dict[str, Any]],
+    ) -> list[dict[str, str]]:
+        out: list[dict[str, str]] = []
+        for note in notes:
+            lower = note.lower()
+            if "concentration high" in lower:
+                out.append({"title": "Concentration Risk", "severity": "high", "reason": note})
+            elif "drawdown elevated" in lower:
+                out.append({"title": "Drawdown Pressure", "severity": "high", "reason": note})
+            elif "volatility elevated" in lower:
+                out.append({"title": "Volatility Regime", "severity": "medium", "reason": note})
+            elif "missing market data" in lower:
+                out.append({"title": "Data Gaps", "severity": "medium", "reason": note})
+
+        vix = macro.get("VIX")
+        if vix and vix.chg_pct_1d is not None and vix.chg_pct_1d >= 0.05:
+            out.append(
+                {
+                    "title": "Volatility Spike",
+                    "severity": "high",
+                    "reason": f"VIX changed {vix.chg_pct_1d:.1%} in latest snapshot.",
+                }
+            )
+
+        risk_up_high = sum(1 for row in radar if row["direction"] == "risk-up" and row["impact"] == "high")
+        if risk_up_high >= 2:
+            out.append(
+                {
+                    "title": "Headline Shock Cluster",
+                    "severity": "high",
+                    "reason": f"{risk_up_high} high-impact risk-up headlines are active.",
+                }
+            )
+
+        if scenarios:
+            worst = min(scenarios, key=lambda row: row["portfolioImpactPct"])
+            if worst["portfolioImpactPct"] <= -0.007:
+                out.append(
+                    {
+                        "title": f"Scenario Stress: {worst['name']}",
+                        "severity": "medium",
+                        "reason": f"Estimated portfolio sensitivity is {worst['portfolioImpactPct']:.2%} under this shock.",
+                    }
+                )
+
+        if not out and risk.get("vol120d") is not None:
+            out.append({"title": "No Immediate Alerts", "severity": "low", "reason": "Current signals are not flashing stress."})
+
+        deduped: list[dict[str, str]] = []
+        seen_titles: set[str] = set()
+        for row in out:
+            title_key = row["title"].lower()
+            if title_key in seen_titles:
+                continue
+            seen_titles.add(title_key)
+            deduped.append(row)
+        return deduped[:6]
+
+    @staticmethod
+    def _merge_signals(base: dict[str, Any], ai: dict[str, Any] | None) -> dict[str, Any]:
+        if not ai:
+            return base
+
+        merged = {
+            "pulse": base.get("pulse", {}),
+            "warnings": list(base.get("warnings", [])),
+            "watchouts": list(base.get("watchouts", [])),
+            "radar": list(base.get("radar", [])),
+            "scenarios": list(base.get("scenarios", [])),
+        }
+
+        ai_pulse = ai.get("pulse")
+        if isinstance(ai_pulse, dict):
+            merged["pulse"].update({k: v for k, v in ai_pulse.items() if v})
+
+        ai_warnings = ai.get("warnings")
+        if isinstance(ai_warnings, list):
+            existing = {row["title"].lower() for row in merged["warnings"] if isinstance(row, dict) and "title" in row}
+            for row in ai_warnings:
+                if not isinstance(row, dict):
+                    continue
+                title = row.get("title")
+                if not isinstance(title, str) or not title.strip():
+                    continue
+                if title.lower() in existing:
+                    continue
+                existing.add(title.lower())
+                merged["warnings"].append(
+                    {
+                        "title": title.strip(),
+                        "severity": row.get("severity") if row.get("severity") in {"low", "medium", "high"} else "medium",
+                        "reason": (row.get("reason") or "").strip(),
+                    }
+                )
+
+        ai_watchouts = ai.get("watchouts")
+        if isinstance(ai_watchouts, list):
+            by_ticker: dict[str, dict[str, Any]] = {
+                row["ticker"]: row for row in merged["watchouts"] if isinstance(row, dict) and isinstance(row.get("ticker"), str)
+            }
+            for row in ai_watchouts:
+                if not isinstance(row, dict):
+                    continue
+                ticker = row.get("ticker")
+                text = row.get("text")
+                if not isinstance(ticker, str) or not ticker.strip() or not isinstance(text, str) or not text.strip():
+                    continue
+                ticker = ticker.strip().upper()
+                severity = row.get("severity") if row.get("severity") in {"low", "medium", "high"} else "medium"
+                by_ticker[ticker] = {"ticker": ticker, "severity": severity, "text": text.strip()}
+            merged["watchouts"] = list(by_ticker.values())
+
+        ai_radar = ai.get("radar")
+        if isinstance(ai_radar, list):
+            by_title: dict[str, dict[str, Any]] = {
+                row["title"].strip().lower(): row for row in merged["radar"] if isinstance(row, dict) and isinstance(row.get("title"), str)
+            }
+            for row in ai_radar:
+                if not isinstance(row, dict):
+                    continue
+                title = row.get("title")
+                if not isinstance(title, str) or not title.strip():
+                    continue
+                key = title.strip().lower()
+                if key not in by_title:
+                    continue
+                target = by_title[key]
+                if row.get("impact") in {"low", "medium", "high"}:
+                    target["impact"] = row["impact"]
+                if row.get("direction") in {"risk-up", "risk-down", "neutral"}:
+                    target["direction"] = row["direction"]
+                if row.get("horizon") in {"intraday", "1w", "1m"}:
+                    target["horizon"] = row["horizon"]
+                related = row.get("relatedTickers")
+                if isinstance(related, list):
+                    clean = [t.strip().upper() for t in related if isinstance(t, str) and t.strip()][:3]
+                    if clean:
+                        target["relatedTickers"] = clean
+
+        merged["warnings"] = merged["warnings"][:6]
+        merged["watchouts"] = merged["watchouts"][:10]
+        merged["radar"] = merged["radar"][:14]
+        return merged
+
     @staticmethod
     def _build_notes(
         top5_weight: float,
@@ -259,6 +562,165 @@ class AnalysisService:
             "macroCoverage": round(macro_coverage, 3),
             "macroNewsCount": float(macro_news_count),
         }
+
+
+_SCENARIOS = [
+    {"id": "rates_up_50bp", "name": "Rates +50bp", "shock": "Treasury yields +50bp", "scalar": 0.007},
+    {"id": "vix_up_20", "name": "VIX +20%", "shock": "Volatility shock", "scalar": 0.012},
+    {"id": "usd_up_2", "name": "USD +2%", "shock": "Dollar squeeze", "scalar": 0.005},
+]
+
+_TECH_TICKERS = {"AAPL", "MSFT", "NVDA", "AMZN", "GOOGL", "META", "TSLA", "QQQ"}
+_FINANCIAL_TICKERS = {"JPM", "BAC", "GS", "MS", "WFC", "XLF", "SCHW"}
+_BOND_TICKERS = {"TLT", "IEF", "AGG", "BND"}
+_GOLD_TICKERS = {"GLD", "IAU", "GDX"}
+_DEFENSIVE_TICKERS = {"XLP", "XLU", "VPU", "KO", "PG"}
+
+_HIGH_IMPACT_KEYWORDS = (
+    "war",
+    "attack",
+    "invasion",
+    "sanction",
+    "recession",
+    "crisis",
+    "default",
+    "inflation",
+    "fed",
+    "rate hike",
+    "yield spike",
+    "plunge",
+    "surge",
+)
+_RISK_UP_KEYWORDS = (
+    "selloff",
+    "drop",
+    "decline",
+    "inflation",
+    "tightening",
+    "hike",
+    "shock",
+    "volatility",
+    "geopolitical",
+    "conflict",
+    "war",
+)
+_RISK_DOWN_KEYWORDS = (
+    "cooling",
+    "disinflation",
+    "pause",
+    "cut",
+    "rally",
+    "rebound",
+    "stabilize",
+)
+_INTRADAY_KEYWORDS = ("today", "now", "overnight")
+_WEEK_KEYWORDS = ("this week", "week", "next week", "days")
+
+
+def _build_pulse(warnings: list[dict[str, str]], scenarios: list[dict[str, Any]]) -> dict[str, Any]:
+    worst_impact = min((s["portfolioImpactPct"] for s in scenarios), default=0.0)
+    high_alerts = sum(1 for w in warnings if w.get("severity") == "high")
+    if high_alerts >= 1 or worst_impact <= -0.008:
+        stance = "risk-off"
+    elif worst_impact >= 0.004 and high_alerts == 0:
+        stance = "risk-on"
+    else:
+        stance = "balanced"
+
+    if scenarios:
+        worst = min(scenarios, key=lambda row: row["portfolioImpactPct"])
+        thesis = f"Largest modeled stress is {worst['name']} ({worst['portfolioImpactPct']:.2%}); prioritize exposure control."
+    else:
+        thesis = "Risk posture is balanced with no dominant scenario stress."
+
+    focus = [w["title"] for w in warnings if isinstance(w.get("title"), str)][:3]
+    return {"thesis": thesis, "stance": stance, "focus": focus}
+
+
+def _severity_from_rank(rank: int) -> str:
+    if rank >= 2:
+        return "high"
+    if rank == 1:
+        return "medium"
+    return "low"
+
+
+def _impact_score(impact: str) -> int:
+    return {"low": 1, "medium": 2, "high": 3}.get(impact, 1)
+
+
+def _classify_headline(title: str, sentiment_hint: str | None = None) -> tuple[str, str, str]:
+    lower = title.lower()
+    impact = "high" if any(k in lower for k in _HIGH_IMPACT_KEYWORDS) else "medium"
+    if not any(k in lower for k in _HIGH_IMPACT_KEYWORDS) and len(title) < 85:
+        impact = "low"
+
+    direction = "neutral"
+    risk_up_hits = sum(1 for k in _RISK_UP_KEYWORDS if k in lower)
+    risk_down_hits = sum(1 for k in _RISK_DOWN_KEYWORDS if k in lower)
+    if risk_up_hits > risk_down_hits:
+        direction = "risk-up"
+    elif risk_down_hits > risk_up_hits:
+        direction = "risk-down"
+    elif sentiment_hint:
+        hint = sentiment_hint.lower()
+        if "bear" in hint or "negative" in hint:
+            direction = "risk-up"
+        elif "bull" in hint or "positive" in hint:
+            direction = "risk-down"
+
+    if any(k in lower for k in _INTRADAY_KEYWORDS):
+        horizon = "intraday"
+    elif any(k in lower for k in _WEEK_KEYWORDS):
+        horizon = "1w"
+    else:
+        horizon = "1m"
+
+    return impact, direction, horizon
+
+
+def _extract_related_tickers(title: str, top_tickers: list[str]) -> list[str]:
+    related: list[str] = []
+    upper_title = title.upper()
+    for ticker in top_tickers:
+        if re.search(rf"\b{re.escape(ticker)}\b", upper_title):
+            related.append(ticker)
+    if related:
+        return related[:3]
+    return top_tickers[:2]
+
+
+def _scenario_sensitivity(ticker: str, scenario_id: str) -> float:
+    symbol = ticker.upper()
+    if scenario_id == "rates_up_50bp":
+        if symbol in _TECH_TICKERS:
+            return -0.65
+        if symbol in _FINANCIAL_TICKERS:
+            return 0.3
+        if symbol in _BOND_TICKERS:
+            return -0.9
+        if symbol in _GOLD_TICKERS:
+            return -0.2
+        return -0.25
+    if scenario_id == "vix_up_20":
+        if symbol in _TECH_TICKERS:
+            return -0.75
+        if symbol in _DEFENSIVE_TICKERS:
+            return -0.2
+        if symbol in _BOND_TICKERS:
+            return 0.2
+        if symbol in _GOLD_TICKERS:
+            return 0.45
+        return -0.5
+    if scenario_id == "usd_up_2":
+        if symbol in _TECH_TICKERS:
+            return -0.35
+        if symbol in _FINANCIAL_TICKERS:
+            return 0.1
+        if symbol in _GOLD_TICKERS:
+            return -0.4
+        return -0.2
+    return 0.0
 
 
 def _daily_returns(prices: list[float]) -> list[float]:

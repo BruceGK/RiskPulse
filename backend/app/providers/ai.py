@@ -11,29 +11,37 @@ from app.config import Settings
 from app.providers.cache import TTLCache
 
 _AI_CACHE = TTLCache[dict[str, Any]](max_size=1200)
+_SEVERITIES = {"low", "medium", "high"}
+_STANCES = {"risk-on", "balanced", "risk-off"}
+_DIRECTIONS = {"risk-up", "risk-down", "neutral"}
+_HORIZONS = {"intraday", "1w", "1m"}
 
 
 class AiProvider:
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
 
-    async def build_intelligence(self, payload: dict[str, Any]) -> dict[str, Any] | None:
+    async def build_signals(self, payload: dict[str, Any]) -> dict[str, Any] | None:
         if not self.settings.openai_api_key:
             return None
         payload_str = json.dumps(payload, sort_keys=True, default=str)
         payload_hash = hashlib.sha256(payload_str.encode("utf-8")).hexdigest()[:24]
-        cache_key = f"ai:intel:{self.settings.openai_model}:{payload_hash}"
+        cache_key = f"ai:signals:{self.settings.openai_model}:{payload_hash}"
         cached = _AI_CACHE.get(cache_key)
         if cached is not None:
             return cached
 
         system_prompt = (
             "You are a portfolio risk analyst. Return ONLY valid JSON with keys: "
-            "thesis (string <= 180 chars), stance (one of: risk-on, balanced, risk-off), "
-            "focus (array of up to 3 short strings). Be factual and do not invent data."
+            "pulse, warnings, watchouts, radar. Keep outputs concise, factual, and grounded in the provided data. "
+            "Schema: pulse={thesis:string<=180, stance:risk-on|balanced|risk-off, focus:string[]<=3}; "
+            "warnings=[{title, severity(low|medium|high), reason}]; "
+            "watchouts=[{ticker, severity(low|medium|high), text}]; "
+            "radar=[{title, impact(low|medium|high), direction(risk-up|risk-down|neutral), "
+            "horizon(intraday|1w|1m), relatedTickers:string[]<=3}]."
         )
         user_prompt = (
-            "Analyze this portfolio snapshot and distill the most relevant risk posture.\n"
+            "Refine risk signals for this portfolio snapshot. Keep wording short and actionable.\n"
             f"JSON input:\n{payload_str}"
         )
         body = {
@@ -42,7 +50,7 @@ class AiProvider:
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},
             ],
-            "max_output_tokens": 160,
+            "max_output_tokens": 380,
         }
         headers = {"Authorization": f"Bearer {self.settings.openai_api_key}", "Content-Type": "application/json"}
 
@@ -56,26 +64,27 @@ class AiProvider:
                 return None
             parsed = _extract_json(text)
             if parsed:
-                thesis = parsed.get("thesis")
-                stance = parsed.get("stance")
-                focus = parsed.get("focus")
+                out = _normalize_signals(parsed)
             else:
-                # Fallback: keep the interface usable even when model returns plain text.
-                thesis = text.strip()
-                stance = "balanced"
-                focus = []
-            if not isinstance(thesis, str) or not thesis.strip():
-                return None
-            if stance not in {"risk-on", "balanced", "risk-off"}:
-                stance = "balanced"
-            if not isinstance(focus, list):
-                focus = []
-            clean_focus = [item.strip() for item in focus if isinstance(item, str) and item.strip()][:3]
-            out = {"thesis": thesis.strip(), "stance": stance, "focus": clean_focus}
+                # Plain text fallback: still provide pulse.
+                out = {
+                    "pulse": {"thesis": text.strip(), "stance": "balanced", "focus": []},
+                    "warnings": [],
+                    "watchouts": [],
+                    "radar": [],
+                }
             _AI_CACHE.set(cache_key, out, ttl_seconds=self.settings.ai_cache_ttl_seconds)
             return out
         except Exception:
             return None
+
+    async def build_intelligence(self, payload: dict[str, Any]) -> dict[str, Any] | None:
+        # Backward-compatible helper.
+        signals = await self.build_signals(payload)
+        if not signals:
+            return None
+        pulse = signals.get("pulse")
+        return pulse if isinstance(pulse, dict) else None
 
 
 def _extract_json(text: str) -> dict[str, Any] | None:
@@ -117,3 +126,91 @@ def _extract_output_text(payload: dict[str, Any]) -> str:
             if isinstance(block_text, str) and block_text.strip():
                 out.append(block_text.strip())
     return "\n".join(out).strip()
+
+
+def _normalize_signals(data: dict[str, Any]) -> dict[str, Any]:
+    pulse_in = data.get("pulse")
+    pulse = {"thesis": "", "stance": "balanced", "focus": []}
+    if isinstance(pulse_in, dict):
+        thesis = pulse_in.get("thesis")
+        stance = pulse_in.get("stance")
+        focus = pulse_in.get("focus")
+        if isinstance(thesis, str) and thesis.strip():
+            pulse["thesis"] = thesis.strip()
+        if stance in _STANCES:
+            pulse["stance"] = stance
+        if isinstance(focus, list):
+            pulse["focus"] = [item.strip() for item in focus if isinstance(item, str) and item.strip()][:3]
+
+    warnings: list[dict[str, str]] = []
+    raw_warnings = data.get("warnings")
+    if isinstance(raw_warnings, list):
+        for row in raw_warnings[:6]:
+            if not isinstance(row, dict):
+                continue
+            title = row.get("title")
+            severity = row.get("severity")
+            reason = row.get("reason")
+            if not isinstance(title, str) or not title.strip():
+                continue
+            if severity not in _SEVERITIES:
+                severity = "medium"
+            if not isinstance(reason, str):
+                reason = ""
+            warnings.append({"title": title.strip(), "severity": severity, "reason": reason.strip()})
+
+    watchouts: list[dict[str, str]] = []
+    raw_watchouts = data.get("watchouts")
+    if isinstance(raw_watchouts, list):
+        for row in raw_watchouts[:12]:
+            if not isinstance(row, dict):
+                continue
+            ticker = row.get("ticker")
+            severity = row.get("severity")
+            text = row.get("text")
+            if not isinstance(ticker, str) or not ticker.strip():
+                continue
+            if severity not in _SEVERITIES:
+                severity = "medium"
+            if not isinstance(text, str) or not text.strip():
+                continue
+            watchouts.append({"ticker": ticker.strip().upper(), "severity": severity, "text": text.strip()})
+
+    radar: list[dict[str, Any]] = []
+    raw_radar = data.get("radar")
+    if isinstance(raw_radar, list):
+        for row in raw_radar[:16]:
+            if not isinstance(row, dict):
+                continue
+            title = row.get("title")
+            if not isinstance(title, str) or not title.strip():
+                continue
+            impact = row.get("impact")
+            direction = row.get("direction")
+            horizon = row.get("horizon")
+            related = row.get("relatedTickers")
+            if impact not in _SEVERITIES:
+                impact = "medium"
+            if direction not in _DIRECTIONS:
+                direction = "neutral"
+            if horizon not in _HORIZONS:
+                horizon = "1w"
+            clean_related: list[str] = []
+            if isinstance(related, list):
+                clean_related = [x.strip().upper() for x in related if isinstance(x, str) and x.strip()][:3]
+            radar.append(
+                {
+                    "title": title.strip(),
+                    "impact": impact,
+                    "direction": direction,
+                    "horizon": horizon,
+                    "relatedTickers": clean_related,
+                }
+            )
+
+    return {
+        "pulse": pulse,
+        "warnings": warnings,
+        "watchouts": watchouts,
+        "radar": radar,
+    }
