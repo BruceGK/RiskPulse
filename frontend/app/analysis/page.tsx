@@ -103,6 +103,7 @@ export default function AnalysisPage() {
   const quoteSources = (analysis?.meta?.quoteSources || null) as null | Record<string, string>;
   const meta = asRecord(analysis?.meta);
   const providers = asRecord(meta?.providers);
+  const modelInfo = asRecord(meta?.model);
   const providerEntries = providers ? Object.entries(providers) : [];
   const signals = asRecord(meta?.signals);
   const intelligence = asRecord(meta?.intelligence) || asRecord(signals?.pulse);
@@ -117,6 +118,13 @@ export default function AnalysisPage() {
   const tickerIntel = asRecordArray(signals?.tickerIntel);
   const opportunities = asRecordArray(signals?.opportunities);
   const exitSignals = asRecordArray(signals?.exitSignals);
+  const predictions = asRecord(signals?.predictions);
+  const prediction5d = asRecord(predictions?.horizon5d);
+  const prediction20d = asRecord(predictions?.horizon20d);
+  const predictionConfidence = asNumber(predictions?.confidence);
+  const portfolioActions = asRecordArray(signals?.portfolioActions);
+  const hedgePlan = asRecordArray(signals?.hedgePlan);
+  const regimeProbs = asRecord(regime?.probabilities);
 
   useEffect(() => {
     if (!scenarios.length) {
@@ -295,6 +303,85 @@ export default function AnalysisPage() {
         </section>
       )}
 
+      {analysis && (predictions || portfolioActions.length > 0 || hedgePlan.length > 0) && (
+        <section className="grid two" style={{ marginBottom: 14 }}>
+          <article className="panel signal-panel">
+            <h3>Forecast Engine</h3>
+            <div className="signal-list">
+              <div className="signal-item">
+                <div className="signal-head">
+                  <strong>5D</strong>
+                  <span className="severity medium">conf {pct(predictionConfidence)}</span>
+                </div>
+                <div className="signal-meta">
+                  expected {pct(asNumber(prediction5d?.expectedReturn))} · downside {pct(asNumber(prediction5d?.downsideProb))} · upside{" "}
+                  {pct(asNumber(prediction5d?.upsideProb))}
+                </div>
+              </div>
+              <div className="signal-item">
+                <div className="signal-head">
+                  <strong>20D</strong>
+                </div>
+                <div className="signal-meta">
+                  expected {pct(asNumber(prediction20d?.expectedReturn))} · downside {pct(asNumber(prediction20d?.downsideProb))} · upside{" "}
+                  {pct(asNumber(prediction20d?.upsideProb))}
+                </div>
+              </div>
+            </div>
+            {regimeProbs && (
+              <div className="notes" style={{ marginTop: 10 }}>
+                {Object.entries(regimeProbs).map(([label, value]) => (
+                  <div className="note" key={label}>
+                    <strong>{label}</strong> {pct(asNumber(value))}
+                  </div>
+                ))}
+              </div>
+            )}
+          </article>
+
+          <article className="panel signal-panel">
+            <h3>Portfolio Action Book</h3>
+            {portfolioActions.length === 0 ? (
+              <div className="status">No explicit rebalance actions from current model run.</div>
+            ) : (
+              <div className="signal-list">
+                {portfolioActions.slice(0, 6).map((row, idx) => {
+                  const ticker = typeof row.ticker === "string" ? row.ticker : "-";
+                  const action = typeof row.action === "string" ? row.action : "hold";
+                  const delta = asNumber(row.targetWeightDelta);
+                  const urgency = row.urgency === "high" || row.urgency === "low" ? row.urgency : "medium";
+                  const reason = typeof row.reason === "string" ? row.reason : "";
+                  return (
+                    <div className={`signal-item ${action === "trim" || action === "de-risk" ? "exit" : "opportunity"}`} key={`${ticker}-${idx}`}>
+                      <div className="signal-head">
+                        <strong>{ticker}</strong>
+                        <span className={`severity ${urgency}`}>{action}</span>
+                      </div>
+                      <div className="signal-meta">target delta {pct(delta)} · urgency {urgency}</div>
+                      {reason && <div className="signal-text">{reason}</div>}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+            {hedgePlan.length > 0 && (
+              <div className="notes" style={{ marginTop: 10 }}>
+                {hedgePlan.map((row, idx) => {
+                  const name = typeof row.name === "string" ? row.name : "Hedge";
+                  const reason = typeof row.reason === "string" ? row.reason : "";
+                  return (
+                    <div className="note" key={`${name}-${idx}`}>
+                      <strong>{name}</strong>
+                      {reason ? ` · ${reason}` : ""}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </article>
+        </section>
+      )}
+
       {loading && <div className="status">Running analysis against live providers...</div>}
       {error && <div className="status error">{error}</div>}
 
@@ -341,6 +428,7 @@ export default function AnalysisPage() {
                 <div className="note">Price coverage: {pct(dataQuality?.priceCoverage)}</div>
                 <div className="note">Macro coverage: {pct(dataQuality?.macroCoverage)}</div>
                 <div className="note">Macro headlines: {String(dataQuality?.macroNewsCount ?? "-")}</div>
+                <div className="note">Model: {typeof modelInfo?.name === "string" ? modelInfo.name : "baseline"}</div>
               </div>
               <div className="hero-meta" style={{ marginTop: 12 }}>
                 {providerEntries.map(([k, v]) => (

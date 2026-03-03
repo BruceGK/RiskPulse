@@ -14,6 +14,7 @@ from app.providers.ai import AiProvider
 from app.providers.macro import MacroProvider
 from app.providers.market import MarketProvider
 from app.providers.news import NewsProvider
+from app.providers.openbb import OpenBBProvider
 from app.providers.sec import SecProvider
 from app.providers.types import SeriesPoint
 
@@ -24,6 +25,7 @@ class AnalysisService:
         self.market = MarketProvider(settings)
         self.macro = MacroProvider(settings)
         self.news = NewsProvider(settings)
+        self.openbb = OpenBBProvider(settings)
         self.sec = SecProvider(settings)
         self.ai = AiProvider(settings)
 
@@ -76,7 +78,15 @@ class AnalysisService:
         try:
             behavioral = await self._build_behavioral_intel(position_rows, news, macro)
         except Exception:
-            behavioral = {"regime": {"state": "insufficient-data"}, "tickerIntel": [], "opportunities": [], "exitSignals": []}
+            behavioral = {
+                "regime": {"state": "insufficient-data"},
+                "tickerIntel": [],
+                "opportunities": [],
+                "exitSignals": [],
+                "predictions": {},
+                "portfolioActions": [],
+                "hedgePlan": [],
+            }
         notes = self._build_notes(top5_weight, risk, missing_quotes, news)
         if not behavioral.get("tickerIntel"):
             notes.append("Behavioral signal model unavailable for this run; using baseline analytics only.")
@@ -123,7 +133,12 @@ class AnalysisService:
             "quoteSources": quote_sources,
             "dataQuality": data_quality,
             "signals": signals,
-            "model": {"name": "riskpulse-behavioral-v1", "type": "multi-factor-event"},
+            "model": {
+                "name": "riskpulse-behavioral-v2",
+                "type": "multi-factor-event",
+                "components": ["regime", "event-shock", "crowding", "allocation"],
+                "openbbEnriched": self.openbb.enabled,
+            },
         }
         pulse = signals.get("pulse")
         if isinstance(pulse, dict):
@@ -238,11 +253,28 @@ class AnalysisService:
     ) -> dict[str, Any]:
         tracked = positions[: self.settings.max_positions_for_intel]
         if not tracked:
-            return {"regime": {"state": "insufficient-data"}, "tickerIntel": [], "opportunities": [], "exitSignals": []}
+            return {
+                "regime": {"state": "insufficient-data"},
+                "tickerIntel": [],
+                "opportunities": [],
+                "exitSignals": [],
+                "predictions": {},
+                "portfolioActions": [],
+                "hedgePlan": [],
+            }
 
         history_tasks = [self.market.get_history(p.ticker, self.settings.history_days) for p in tracked]
         spy_task = self.market.get_history("SPY", self.settings.history_days)
-        histories, spy_history = await asyncio.gather(asyncio.gather(*history_tasks), spy_task)
+        openbb_tasks = [self.openbb.get_ticker_intel(p.ticker) for p in tracked] if self.openbb.enabled else []
+        if openbb_tasks:
+            histories, spy_history, openbb_rows = await asyncio.gather(
+                asyncio.gather(*history_tasks),
+                spy_task,
+                asyncio.gather(*openbb_tasks, return_exceptions=True),
+            )
+        else:
+            histories, spy_history = await asyncio.gather(asyncio.gather(*history_tasks), spy_task)
+            openbb_rows = [{} for _ in tracked]
         spy_metrics = _price_metrics(spy_history)
 
         macro_panic, macro_relief = _macro_stress_scores(macro)
@@ -253,15 +285,18 @@ class AnalysisService:
             if direction == "risk-up":
                 macro_risk_up += 1 if impact == "high" else 0.6
         macro_shock = _clamp01(macro_risk_up / 4.0)
+        macro_risk_down = _clamp01(sum(1 for item in macro_news if "cool" in item.title.lower() or "rebound" in item.title.lower()) / 4.0)
 
         ticker_intel: list[dict[str, Any]] = []
         opportunities: list[dict[str, Any]] = []
         exit_signals: list[dict[str, Any]] = []
-        for p, series in zip(tracked, histories, strict=False):
+        for p, series, openbb_raw in zip(tracked, histories, openbb_rows, strict=False):
+            openbb = openbb_raw if isinstance(openbb_raw, dict) else {}
             metrics = _price_metrics(series)
             returns_count = int(metrics.get("returnsCount", 0))
             ticker_news = news.get(p.ticker, [])[: self.settings.ticker_news_per_symbol]
             news_stats = _ticker_news_stats(ticker_news)
+            openbb_scores = _openbb_scores(openbb)
 
             ret20 = metrics.get("ret20")
             spy_ret20 = spy_metrics.get("ret20")
@@ -287,11 +322,22 @@ class AnalysisService:
             )
 
             vol_spike_factor = min(1.0, max(0.0, vol_ratio - 0.8))
-            panic_score = _clamp01((oversold * 0.55) + (vol_spike_factor * 0.25) + (macro_panic * 0.2))
-            crowding_score = _clamp01((overheated * 0.6) + (news_stats["buzz"] * 0.15) + (p.weight * 0.25))
-            opportunity_index = _clamp01((panic_score * 0.65) + (max(0.0, 0.55 - crowding_score) * 0.35))
-            distribution_index = _clamp01((crowding_score * 0.7) + (max(0.0, 0.45 - panic_score) * 0.3))
+            panic_score = _clamp01((oversold * 0.5) + (vol_spike_factor * 0.2) + (macro_panic * 0.2) + (news_stats["eventRisk"] * 0.1))
+            crowding_score = _clamp01((overheated * 0.55) + (news_stats["buzz"] * 0.15) + (p.weight * 0.15) + (openbb_scores["flow"] * 0.15))
+            opportunity_index = _clamp01(
+                (panic_score * 0.45)
+                + (max(0.0, 0.55 - crowding_score) * 0.25)
+                + (openbb_scores["valuation"] * 0.2)
+                + (openbb_scores["quality"] * 0.1)
+            )
+            distribution_index = _clamp01(
+                (crowding_score * 0.45)
+                + (max(0.0, 0.45 - panic_score) * 0.2)
+                + (openbb_scores["flow"] * 0.2)
+                + (max(0.0, 0.6 - openbb_scores["valuation"]) * 0.15)
+            )
             confidence = _signal_confidence(returns_count, len(ticker_news), relative_20)
+            confidence = _clamp01(confidence + (0.08 if openbb_scores["coverage"] > 0 else 0.0))
 
             action_bias = _action_bias(opportunity_index, distribution_index, macro_panic, news_stats["eventRisk"])
             rationale = _action_rationale(
@@ -318,6 +364,8 @@ class AnalysisService:
                 "themes": news_stats["themes"][:4],
                 "headlineCount": len(ticker_news),
                 "rationale": rationale,
+                "alphaScore": round((opportunity_index - distribution_index) * confidence, 3),
+                "openbb": openbb,
                 "features": {
                     "ret5d": round(ret5, 4) if ret5 is not None else None,
                     "ret20d": round(ret20, 4) if ret20 is not None else None,
@@ -325,6 +373,9 @@ class AnalysisService:
                     "drawdown120d": round(drawdown, 4) if drawdown is not None else None,
                     "rangeLocation120d": round(location, 4) if location is not None else None,
                     "volatilityRatio": round(vol_ratio, 3) if vol_ratio is not None else None,
+                    "valuationScore": round(openbb_scores["valuation"], 3),
+                    "qualityScore": round(openbb_scores["quality"], 3),
+                    "flowScore": round(openbb_scores["flow"], 3),
                 },
             }
             ticker_intel.append(intel_row)
@@ -352,9 +403,22 @@ class AnalysisService:
 
         weighted_panic = _weighted_signal(ticker_intel, "panicScore")
         weighted_crowding = _weighted_signal(ticker_intel, "crowdingScore")
+        weighted_event_risk = _weighted_signal(ticker_intel, "eventRisk")
+        weighted_opportunity = _weighted_signal(ticker_intel, "opportunityIndex")
+        weighted_distribution = _weighted_signal(ticker_intel, "distributionIndex")
         regime_panic = _clamp01((weighted_panic * 0.6) + (macro_panic * 0.25) + (macro_shock * 0.15))
         regime_crowding = _clamp01((weighted_crowding * 0.7) + (macro_relief * 0.2) + (1 - macro_shock) * 0.1)
         regime_state = _regime_label(regime_panic, regime_crowding)
+        regime_probabilities = _regime_probabilities(regime_panic, regime_crowding, macro_shock, macro_risk_down)
+
+        downside_5d = _clamp01(0.18 + (regime_panic * 0.36) + (weighted_event_risk * 0.22) + (weighted_distribution * 0.18) - (weighted_opportunity * 0.14))
+        upside_5d = _clamp01(0.14 + ((1 - regime_panic) * 0.2) + (weighted_opportunity * 0.32) + (macro_risk_down * 0.12) - (weighted_distribution * 0.12))
+        expected_5d = _expected_return_5d(weighted_opportunity, weighted_distribution, regime_panic, weighted_event_risk)
+        expected_20d = _expected_return_20d(weighted_opportunity, weighted_distribution, regime_panic, weighted_event_risk, macro_relief)
+        prediction_conf = _clamp01((sum(row.get("confidence", 0.0) for row in ticker_intel if isinstance(row.get("confidence"), (int, float))) / max(len(ticker_intel), 1)) * 0.9 + 0.05)
+
+        portfolio_actions = _portfolio_actions(ticker_intel, regime_state)
+        hedge_plan = _hedge_plan(regime_state, regime_panic, weighted_event_risk)
 
         opportunities.sort(key=lambda row: (row["score"], row["confidence"]), reverse=True)
         exit_signals.sort(key=lambda row: (row["score"], row["confidence"]), reverse=True)
@@ -365,10 +429,26 @@ class AnalysisService:
                 "panicScore": round(regime_panic, 3),
                 "crowdingScore": round(regime_crowding, 3),
                 "macroShock": round(macro_shock, 3),
+                "probabilities": regime_probabilities,
             },
             "tickerIntel": ticker_intel,
             "opportunities": opportunities[:4],
             "exitSignals": exit_signals[:4],
+            "predictions": {
+                "horizon5d": {
+                    "downsideProb": round(downside_5d, 3),
+                    "upsideProb": round(upside_5d, 3),
+                    "expectedReturn": round(expected_5d, 4),
+                },
+                "horizon20d": {
+                    "expectedReturn": round(expected_20d, 4),
+                    "downsideProb": round(_clamp01(downside_5d * 0.88), 3),
+                    "upsideProb": round(_clamp01(upside_5d * 0.93), 3),
+                },
+                "confidence": round(prediction_conf, 3),
+            },
+            "portfolioActions": portfolio_actions[:8],
+            "hedgePlan": hedge_plan[:4],
         }
 
     def _build_signals(
@@ -396,6 +476,9 @@ class AnalysisService:
             "tickerIntel": behavioral.get("tickerIntel", []),
             "opportunities": behavioral.get("opportunities", []),
             "exitSignals": behavioral.get("exitSignals", []),
+            "predictions": behavioral.get("predictions", {}),
+            "portfolioActions": behavioral.get("portfolioActions", []),
+            "hedgePlan": behavioral.get("hedgePlan", []),
         }
 
     def _build_headline_radar(self, news: dict[str, list[Headline]], top_tickers: list[str]) -> list[dict[str, Any]]:
@@ -630,6 +713,20 @@ class AnalysisService:
                     }
                 )
 
+        predictions = behavioral.get("predictions", {}) if isinstance(behavioral, dict) else {}
+        if isinstance(predictions, dict):
+            h5 = predictions.get("horizon5d")
+            if isinstance(h5, dict):
+                downside = h5.get("downsideProb")
+                if isinstance(downside, (int, float)) and downside >= 0.55:
+                    out.append(
+                        {
+                            "title": "Short-Horizon Downside Risk",
+                            "severity": "high" if downside >= 0.65 else "medium",
+                            "reason": f"Model downside probability for next 5d is {downside:.0%}.",
+                        }
+                    )
+
         if not out and risk.get("vol120d") is not None:
             out.append({"title": "No Immediate Alerts", "severity": "low", "reason": "Current signals are not flashing stress."})
 
@@ -658,6 +755,9 @@ class AnalysisService:
             "tickerIntel": list(base.get("tickerIntel", [])),
             "opportunities": list(base.get("opportunities", [])),
             "exitSignals": list(base.get("exitSignals", [])),
+            "predictions": base.get("predictions", {}),
+            "portfolioActions": list(base.get("portfolioActions", [])),
+            "hedgePlan": list(base.get("hedgePlan", [])),
         }
 
         ai_pulse = ai.get("pulse")
@@ -734,6 +834,8 @@ class AnalysisService:
         merged["tickerIntel"] = merged["tickerIntel"][:10]
         merged["opportunities"] = merged["opportunities"][:4]
         merged["exitSignals"] = merged["exitSignals"][:4]
+        merged["portfolioActions"] = merged["portfolioActions"][:8]
+        merged["hedgePlan"] = merged["hedgePlan"][:4]
         return merged
 
     @staticmethod
@@ -1108,6 +1210,146 @@ def _regime_label(panic: float, crowding: float) -> str:
     if panic <= 0.35 and crowding <= 0.45:
         return "calm"
     return "mixed"
+
+
+def _regime_probabilities(panic: float, crowding: float, macro_shock: float, macro_relief: float) -> dict[str, float]:
+    stress = _clamp01((panic * 0.72) + (macro_shock * 0.28))
+    overheated = _clamp01((crowding * 0.7) + ((1 - panic) * 0.2) + ((1 - macro_shock) * 0.1))
+    calm = _clamp01(((1 - panic) * 0.45) + ((1 - crowding) * 0.4) + (macro_relief * 0.15))
+    transition = _clamp01(1.0 - max(stress, overheated, calm) + 0.12)
+    values = {"stress": stress, "overheated": overheated, "calm": calm, "transition": transition}
+    total = sum(values.values()) or 1.0
+    return {k: round(v / total, 3) for k, v in values.items()}
+
+
+def _expected_return_5d(opportunity: float, distribution: float, panic: float, event_risk: float) -> float:
+    return (opportunity * 0.032) - (distribution * 0.024) - (panic * 0.014) - (event_risk * 0.01) + 0.002
+
+
+def _expected_return_20d(opportunity: float, distribution: float, panic: float, event_risk: float, relief: float) -> float:
+    return (opportunity * 0.085) - (distribution * 0.056) - (panic * 0.03) - (event_risk * 0.018) + (relief * 0.011) + 0.006
+
+
+def _portfolio_actions(ticker_intel: list[dict[str, Any]], regime_state: str) -> list[dict[str, Any]]:
+    actions: list[dict[str, Any]] = []
+    for row in ticker_intel:
+        ticker = row.get("ticker")
+        if not isinstance(ticker, str):
+            continue
+        opp = row.get("opportunityIndex")
+        dist = row.get("distributionIndex")
+        conf = row.get("confidence")
+        weight = row.get("weight")
+        if not all(isinstance(v, (int, float)) for v in (opp, dist, conf, weight)):
+            continue
+
+        action = "hold"
+        delta = 0.0
+        urgency = "low"
+        if opp >= 0.67 and conf >= 0.45 and dist <= 0.58:
+            action = "accumulate"
+            delta = min(0.035, max(0.008, (opp - dist) * 0.06))
+            urgency = "medium" if opp < 0.78 else "high"
+        elif dist >= 0.67 and conf >= 0.45:
+            action = "trim"
+            delta = -min(0.04, max(0.01, (dist - opp) * 0.065))
+            urgency = "medium" if dist < 0.78 else "high"
+        elif regime_state == "stress" and weight >= 0.18:
+            action = "de-risk"
+            delta = -min(0.03, max(0.008, weight * 0.08))
+            urgency = "high"
+        if action == "hold":
+            continue
+        reason = row.get("rationale") if isinstance(row.get("rationale"), str) else "No additional rationale."
+        actions.append(
+            {
+                "ticker": ticker,
+                "action": action,
+                "targetWeightDelta": round(delta, 4),
+                "urgency": urgency,
+                "confidence": round(float(conf), 3),
+                "reason": reason,
+            }
+        )
+
+    actions.sort(key=lambda item: (item["urgency"] == "high", abs(item["targetWeightDelta"]), item["confidence"]), reverse=True)
+    return actions
+
+
+def _hedge_plan(regime_state: str, panic: float, event_risk: float) -> list[dict[str, str]]:
+    out: list[dict[str, str]] = []
+    if regime_state == "stress" or panic >= 0.72:
+        out.append({"name": "Index Put Overlay", "priority": "high", "reason": "Downside regime probability is elevated."})
+        out.append({"name": "Raise Cash Buffer", "priority": "high", "reason": "Reduce forced selling risk under shock moves."})
+    if event_risk >= 0.62:
+        out.append({"name": "Volatility Hedge", "priority": "medium", "reason": "Headline shock clustering is active."})
+    if regime_state == "overheated":
+        out.append({"name": "Call Overwrite", "priority": "medium", "reason": "Crowding regime suggests harvesting upside convexity."})
+    if not out:
+        out.append({"name": "No Hedge Adjustment", "priority": "low", "reason": "Regime and event risk are within normal range."})
+    return out
+
+
+def _openbb_scores(openbb: dict[str, Any]) -> dict[str, float]:
+    if not isinstance(openbb, dict):
+        return {"valuation": 0.5, "quality": 0.5, "flow": 0.5, "coverage": 0.0}
+
+    valuation = openbb.get("valuation", {}) if isinstance(openbb.get("valuation"), dict) else {}
+    quality = openbb.get("quality", {}) if isinstance(openbb.get("quality"), dict) else {}
+    options = openbb.get("options", {}) if isinstance(openbb.get("options"), dict) else {}
+    shorts = openbb.get("shorts", {}) if isinstance(openbb.get("shorts"), dict) else {}
+
+    pe = _as_float(valuation.get("pe"))
+    pb = _as_float(valuation.get("pb"))
+    ev = _as_float(valuation.get("evEbitda"))
+    fcf_yield = _as_float(valuation.get("fcfYield"))
+
+    roe = _as_float(quality.get("roe"))
+    gm = _as_float(quality.get("grossMargin"))
+    d2e = _as_float(quality.get("debtToEquity"))
+
+    pcr = _as_float(options.get("putCallRatio"))
+    skew = _as_float(options.get("skew"))
+    iv = _as_float(options.get("ivLevel"))
+    short_interest = _as_float(shorts.get("shortInterestPct"))
+
+    valuation_score = _clamp01(
+        (max(0.0, 28 - (pe or 28)) / 28.0) * 0.28
+        + (max(0.0, 4.5 - (pb or 4.5)) / 4.5) * 0.22
+        + (max(0.0, 18 - (ev or 18)) / 18.0) * 0.2
+        + ((max(-0.01, min(0.06, fcf_yield or 0.0)) + 0.01) / 0.07) * 0.3
+    )
+    quality_score = _clamp01(
+        ((max(-0.05, min(0.35, roe or 0.1)) + 0.05) / 0.4) * 0.4
+        + ((max(0.05, min(0.75, gm or 0.4)) - 0.05) / 0.7) * 0.3
+        + (max(0.0, 2.5 - (d2e or 1.2)) / 2.5) * 0.3
+    )
+    flow_score = _clamp01(
+        (max(0.0, (pcr or 0.9) - 0.8) / 1.2) * 0.4
+        + (max(0.0, (short_interest or 2.5) - 2.5) / 18.0) * 0.2
+        + (max(0.0, (skew or 0.0) + 0.02) / 0.2) * 0.2
+        + (max(0.0, (iv or 0.25) - 0.2) / 0.8) * 0.2
+    )
+    coverage = 0.0
+    for value in (pe, pb, ev, fcf_yield, roe, gm, d2e, pcr, skew, iv, short_interest):
+        if value is not None:
+            coverage += 1
+    coverage = min(1.0, coverage / 7.0)
+    return {
+        "valuation": valuation_score,
+        "quality": quality_score,
+        "flow": flow_score,
+        "coverage": coverage,
+    }
+
+
+def _as_float(value: Any) -> float | None:
+    try:
+        if value is None:
+            return None
+        return float(value)
+    except (TypeError, ValueError):
+        return None
 
 
 def _clamp01(value: float) -> float:

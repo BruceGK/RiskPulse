@@ -11,6 +11,7 @@ Azure-ready portfolio + macro analysis MVP.
   - free-tier safeguards (Alpha Vantage call cap and graceful throttling fallback)
   - SEC filing hints for top holdings
   - behavioral signal model for panic/crowding/dislocation and ticker-level action bias
+  - regime probabilities, forecast probabilities (5d/20d), action book, and hedge plan outputs
   - optional low-cost OpenAI narrative refinement (cached to reduce repeated token spend)
 - `frontend/`: Next.js app
   - `/portfolio` position entry

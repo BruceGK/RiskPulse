@@ -7,6 +7,7 @@ import httpx
 
 from app.config import Settings
 from app.providers.cache import TTLCache
+from app.providers.openbb import OpenBBProvider
 from app.providers.types import NewsItem
 
 _NEWS_CACHE = TTLCache[list[NewsItem]](max_size=3000)
@@ -15,6 +16,7 @@ _NEWS_CACHE = TTLCache[list[NewsItem]](max_size=3000)
 class NewsProvider:
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
+        self.openbb = OpenBBProvider(settings)
 
     async def get_ticker_news(self, ticker: str, limit: int) -> list[NewsItem]:
         cache_key = f"ticker-news:{ticker}:{limit}"
@@ -23,6 +25,8 @@ class NewsProvider:
             return cached
 
         items = await self._polygon_ticker_news(ticker, limit)
+        if not items:
+            items = await self._openbb_ticker_news(ticker, limit)
         if not items:
             items = await self._alpha_vantage_ticker_news(ticker, limit)
         if not items:
@@ -40,6 +44,8 @@ class NewsProvider:
             return cached
 
         items = await self._polygon_macro_news(limit)
+        if not items:
+            items = await self._openbb_macro_news(limit)
         if not items:
             items = await self._alpha_vantage_macro_news(limit)
         if not items:
@@ -178,6 +184,52 @@ class NewsProvider:
             return out
         except Exception:
             return []
+
+    async def _openbb_ticker_news(self, ticker: str, limit: int) -> list[NewsItem]:
+        rows = await self.openbb.get_ticker_news(ticker, limit)
+        if not rows:
+            return []
+        out: list[NewsItem] = []
+        for row in rows:
+            title = row.get("title")
+            url = row.get("url")
+            if not title or not url:
+                continue
+            out.append(
+                NewsItem(
+                    source=str(row.get("source") or "OpenBB"),
+                    title=str(title),
+                    url=str(url),
+                    published_at=str(row.get("published_at")) if row.get("published_at") else None,
+                    sentiment_hint=str(row.get("sentiment_hint")) if row.get("sentiment_hint") else None,
+                )
+            )
+        return out[:limit]
+
+    async def _openbb_macro_news(self, limit: int) -> list[NewsItem]:
+        rows = await self.openbb.get_macro_news(limit)
+        if not rows:
+            return []
+        out: list[NewsItem] = []
+        keywords = ("fed", "inflation", "treasury", "yield", "dollar", "macro", "cpi", "jobs", "oil", "war", "risk")
+        for row in rows:
+            title = str(row.get("title") or "")
+            url = str(row.get("url") or "")
+            if not title or not url:
+                continue
+            lower = title.lower()
+            if not any(keyword in lower for keyword in keywords):
+                continue
+            out.append(
+                NewsItem(
+                    source=str(row.get("source") or "OpenBB"),
+                    title=title,
+                    url=url,
+                    published_at=str(row.get("published_at")) if row.get("published_at") else None,
+                    sentiment_hint=str(row.get("sentiment_hint")) if row.get("sentiment_hint") else None,
+                )
+            )
+        return out[:limit]
 
     async def _google_news_ticker_news(self, ticker: str, limit: int) -> list[NewsItem]:
         query = f"{ticker} stock"
