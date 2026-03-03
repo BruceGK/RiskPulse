@@ -37,6 +37,7 @@ class MarketProvider:
         pending = await self._merge_quotes(out, pending, self._fetch_fmp_quotes)
         # Preserve Alpha Vantage quota for news fallback on free-tier setups.
         pending = await self._merge_quotes(out, pending, self._fetch_yahoo_quotes)
+        pending = await self._merge_quotes(out, pending, self._fetch_yahoo_chart_quotes)
         pending = await self._merge_quotes(out, pending, self._fetch_alpha_vantage_quotes)
 
         for ticker in pending:
@@ -153,6 +154,37 @@ class MarketProvider:
             return out
         except Exception:
             return {}
+
+    async def _fetch_yahoo_chart_quotes(self, tickers: list[str]) -> dict[str, Quote]:
+        headers = {"User-Agent": "Mozilla/5.0 RiskPulse/1.0", "Accept": "application/json"}
+        out: dict[str, Quote] = {}
+        async with httpx.AsyncClient(timeout=self.settings.request_timeout_seconds) as client:
+            for ticker in tickers:
+                url = f"https://query1.finance.yahoo.com/v8/finance/chart/{ticker}"
+                params = {"range": "5d", "interval": "1d", "includePrePost": "false", "events": "history"}
+                try:
+                    resp = await client.get(url, params=params, headers=headers)
+                    resp.raise_for_status()
+                    result = (resp.json().get("chart", {}).get("result") or [{}])[0]
+                    meta = result.get("meta", {}) or {}
+                    price = meta.get("regularMarketPrice")
+                    prev = meta.get("chartPreviousClose") or meta.get("previousClose")
+                    if not price:
+                        closes = result.get("indicators", {}).get("quote", [{}])[0].get("close", [])
+                        valid = [float(c) for c in closes if c is not None]
+                        if valid:
+                            price = valid[-1]
+                            prev = valid[-2] if len(valid) > 1 else prev
+                    if price:
+                        out[ticker] = Quote(
+                            ticker=ticker,
+                            price=float(price),
+                            prev_close=float(prev) if prev else None,
+                            source="yahoo",
+                        )
+                except Exception:
+                    continue
+        return out
 
     async def _fetch_alpha_vantage_quotes(self, tickers: list[str]) -> dict[str, Quote]:
         if not self.settings.alpha_vantage_api_key:
