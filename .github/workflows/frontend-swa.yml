@@ -13,6 +13,10 @@ on:
     paths:
       - "frontend/**"
 
+concurrency:
+  group: swa-production
+  cancel-in-progress: true
+
 jobs:
   deploy:
     if: github.event_name == 'push' || github.event.action != 'closed'
