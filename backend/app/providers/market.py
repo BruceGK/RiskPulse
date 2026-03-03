@@ -40,7 +40,7 @@ class MarketProvider:
         pending = await self._merge_quotes(out, pending, self._fetch_alpha_vantage_quotes)
 
         for ticker in pending:
-            _MISS_CACHE.set(f"quote:{ticker}", True, ttl_seconds=90)
+            _MISS_CACHE.set(f"quote:{ticker}", True, ttl_seconds=self.settings.quote_miss_cache_ttl_seconds)
         return out
 
     async def get_history(self, ticker: str, days: int) -> list[float]:
@@ -63,7 +63,7 @@ class MarketProvider:
                 _HISTORY_CACHE.set(key, history, ttl_seconds=self.settings.history_cache_ttl_seconds)
                 return history
 
-        _MISS_CACHE.set(key, True, ttl_seconds=300)
+        _MISS_CACHE.set(key, True, ttl_seconds=self.settings.history_miss_cache_ttl_seconds)
         return []
 
     async def _merge_quotes(self, out: dict[str, Quote], pending: list[str], fetcher) -> list[str]:

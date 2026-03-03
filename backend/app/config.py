@@ -10,7 +10,9 @@ class Settings(BaseSettings):
     history_days: int = 120
     news_limit: int = 20
     quote_cache_ttl_seconds: int = 120
+    quote_miss_cache_ttl_seconds: int = 15
     history_cache_ttl_seconds: int = 3600
+    history_miss_cache_ttl_seconds: int = 60
     macro_cache_ttl_seconds: int = 1800
     news_cache_ttl_seconds: int = 900
     alpha_vantage_max_calls_per_request: int = 4

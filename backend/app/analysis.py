@@ -71,6 +71,10 @@ class AnalysisService:
         macro = self._build_macro_payload(macro_raw, quotes)
         news = await self._build_news_payload(position_rows)
         notes = self._build_notes(top5_weight, risk, missing_quotes, news)
+        if missing_quotes and self.settings.alpha_vantage_api_key and not (
+            self.settings.polygon_api_key or self.settings.fmp_api_key
+        ):
+            notes.append("Free Alpha Vantage limits can cause partial quotes. Wait ~60s and refresh analysis.")
         if len(position_rows) > self.settings.max_positions_for_risk:
             notes.append(
                 f"Risk metrics computed on top {self.settings.max_positions_for_risk} holdings by market value."
