@@ -66,13 +66,8 @@ class AiProvider:
             if parsed:
                 out = _normalize_signals(parsed)
             else:
-                # Plain text fallback: still provide pulse.
-                out = {
-                    "pulse": {"thesis": text.strip(), "stance": "balanced", "focus": []},
-                    "warnings": [],
-                    "watchouts": [],
-                    "radar": [],
-                }
+                # Do not pass raw malformed text through; caller already has deterministic signals.
+                return None
             _AI_CACHE.set(cache_key, out, ttl_seconds=self.settings.ai_cache_ttl_seconds)
             return out
         except Exception:
@@ -88,13 +83,14 @@ class AiProvider:
 
 
 def _extract_json(text: str) -> dict[str, Any] | None:
+    normalized = _strip_code_fences(text)
     try:
-        data = json.loads(text)
+        data = json.loads(normalized)
         return data if isinstance(data, dict) else None
     except Exception:
         pass
 
-    match = re.search(r"\{.*\}", text, flags=re.DOTALL)
+    match = re.search(r"\{.*\}", normalized, flags=re.DOTALL)
     if not match:
         return None
     try:
@@ -136,11 +132,13 @@ def _normalize_signals(data: dict[str, Any]) -> dict[str, Any]:
         stance = pulse_in.get("stance")
         focus = pulse_in.get("focus")
         if isinstance(thesis, str) and thesis.strip():
-            pulse["thesis"] = thesis.strip()
+            clean = _sanitize_text(thesis)
+            if clean:
+                pulse["thesis"] = clean[:180]
         if stance in _STANCES:
             pulse["stance"] = stance
         if isinstance(focus, list):
-            pulse["focus"] = [item.strip() for item in focus if isinstance(item, str) and item.strip()][:3]
+            pulse["focus"] = [_sanitize_text(item) for item in focus if isinstance(item, str) and _sanitize_text(item)][:3]
 
     warnings: list[dict[str, str]] = []
     raw_warnings = data.get("warnings")
@@ -157,7 +155,13 @@ def _normalize_signals(data: dict[str, Any]) -> dict[str, Any]:
                 severity = "medium"
             if not isinstance(reason, str):
                 reason = ""
-            warnings.append({"title": title.strip(), "severity": severity, "reason": reason.strip()})
+            warnings.append(
+                {
+                    "title": _sanitize_text(title)[:90] or "Warning",
+                    "severity": severity,
+                    "reason": _sanitize_text(reason)[:220],
+                }
+            )
 
     watchouts: list[dict[str, str]] = []
     raw_watchouts = data.get("watchouts")
@@ -174,7 +178,10 @@ def _normalize_signals(data: dict[str, Any]) -> dict[str, Any]:
                 severity = "medium"
             if not isinstance(text, str) or not text.strip():
                 continue
-            watchouts.append({"ticker": ticker.strip().upper(), "severity": severity, "text": text.strip()})
+            clean_text = _sanitize_text(text)
+            if not clean_text:
+                continue
+            watchouts.append({"ticker": ticker.strip().upper(), "severity": severity, "text": clean_text[:220]})
 
     radar: list[dict[str, Any]] = []
     raw_radar = data.get("radar")
@@ -184,6 +191,9 @@ def _normalize_signals(data: dict[str, Any]) -> dict[str, Any]:
                 continue
             title = row.get("title")
             if not isinstance(title, str) or not title.strip():
+                continue
+            clean_title = _sanitize_text(title)
+            if not clean_title:
                 continue
             impact = row.get("impact")
             direction = row.get("direction")
@@ -200,7 +210,7 @@ def _normalize_signals(data: dict[str, Any]) -> dict[str, Any]:
                 clean_related = [x.strip().upper() for x in related if isinstance(x, str) and x.strip()][:3]
             radar.append(
                 {
-                    "title": title.strip(),
+                    "title": clean_title[:140],
                     "impact": impact,
                     "direction": direction,
                     "horizon": horizon,
@@ -214,3 +224,19 @@ def _normalize_signals(data: dict[str, Any]) -> dict[str, Any]:
         "watchouts": watchouts,
         "radar": radar,
     }
+
+
+def _strip_code_fences(text: str) -> str:
+    stripped = text.strip()
+    if stripped.startswith("```"):
+        stripped = re.sub(r"^```[a-zA-Z0-9_-]*\n?", "", stripped)
+        stripped = re.sub(r"\n?```$", "", stripped)
+    return stripped.strip()
+
+
+def _sanitize_text(text: str) -> str:
+    cleaned = _strip_code_fences(text)
+    cleaned = cleaned.replace("\n", " ").replace("\r", " ").strip()
+    if "{" in cleaned or "}" in cleaned:
+        return ""
+    return re.sub(r"\s{2,}", " ", cleaned)
