@@ -86,6 +86,9 @@ class AnalysisService:
                 "predictions": {},
                 "portfolioActions": [],
                 "hedgePlan": [],
+                "construction": {},
+                "alphaBook": {},
+                "submodels": {},
             }
         notes = self._build_notes(top5_weight, risk, missing_quotes, news)
         if not behavioral.get("tickerIntel"):
@@ -134,9 +137,9 @@ class AnalysisService:
             "dataQuality": data_quality,
             "signals": signals,
             "model": {
-                "name": "riskpulse-behavioral-v2",
-                "type": "multi-factor-event",
-                "components": ["regime", "event-shock", "crowding", "allocation"],
+                "name": "riskpulse-behavioral-v3",
+                "type": "multi-model-stacking",
+                "components": ["regime", "event-shock", "crowding", "alpha", "construction", "allocation"],
                 "openbbEnriched": self.openbb.enabled,
             },
         }
@@ -261,6 +264,9 @@ class AnalysisService:
                 "predictions": {},
                 "portfolioActions": [],
                 "hedgePlan": [],
+                "construction": {},
+                "alphaBook": {},
+                "submodels": {},
             }
 
         history_tasks = [self.market.get_history(p.ticker, self.settings.history_days) for p in tracked]
@@ -406,6 +412,7 @@ class AnalysisService:
         weighted_event_risk = _weighted_signal(ticker_intel, "eventRisk")
         weighted_opportunity = _weighted_signal(ticker_intel, "opportunityIndex")
         weighted_distribution = _weighted_signal(ticker_intel, "distributionIndex")
+        weighted_alpha = _weighted_signal(ticker_intel, "alphaScore")
         regime_panic = _clamp01((weighted_panic * 0.6) + (macro_panic * 0.25) + (macro_shock * 0.15))
         regime_crowding = _clamp01((weighted_crowding * 0.7) + (macro_relief * 0.2) + (1 - macro_shock) * 0.1)
         regime_state = _regime_label(regime_panic, regime_crowding)
@@ -417,8 +424,16 @@ class AnalysisService:
         expected_20d = _expected_return_20d(weighted_opportunity, weighted_distribution, regime_panic, weighted_event_risk, macro_relief)
         prediction_conf = _clamp01((sum(row.get("confidence", 0.0) for row in ticker_intel if isinstance(row.get("confidence"), (int, float))) / max(len(ticker_intel), 1)) * 0.9 + 0.05)
 
-        portfolio_actions = _portfolio_actions(ticker_intel, regime_state)
+        construction = _construct_portfolio_targets(ticker_intel, regime_state)
+        portfolio_actions = _action_book_from_targets(construction.get("targets", []), ticker_intel)
         hedge_plan = _hedge_plan(regime_state, regime_panic, weighted_event_risk)
+        alpha_book = _alpha_book(ticker_intel)
+        submodels = {
+            "regime": {"score": round(regime_panic, 3), "confidence": round(_clamp01(0.5 + prediction_conf * 0.5), 3)},
+            "alpha": {"score": round(weighted_alpha, 3), "confidence": round(_clamp01(0.45 + weighted_opportunity * 0.35 + (1 - weighted_distribution) * 0.2), 3)},
+            "event": {"score": round(weighted_event_risk, 3), "confidence": round(_clamp01(0.4 + (len(macro_news) / 20.0) + (weighted_event_risk * 0.3)), 3)},
+            "crowding": {"score": round(weighted_crowding, 3), "confidence": round(_clamp01(0.4 + weighted_crowding * 0.4 + weighted_distribution * 0.2), 3)},
+        }
 
         opportunities.sort(key=lambda row: (row["score"], row["confidence"]), reverse=True)
         exit_signals.sort(key=lambda row: (row["score"], row["confidence"]), reverse=True)
@@ -449,6 +464,9 @@ class AnalysisService:
             },
             "portfolioActions": portfolio_actions[:8],
             "hedgePlan": hedge_plan[:4],
+            "construction": construction,
+            "alphaBook": alpha_book,
+            "submodels": submodels,
         }
 
     def _build_signals(
@@ -479,6 +497,9 @@ class AnalysisService:
             "predictions": behavioral.get("predictions", {}),
             "portfolioActions": behavioral.get("portfolioActions", []),
             "hedgePlan": behavioral.get("hedgePlan", []),
+            "construction": behavioral.get("construction", {}),
+            "alphaBook": behavioral.get("alphaBook", {}),
+            "submodels": behavioral.get("submodels", {}),
         }
 
     def _build_headline_radar(self, news: dict[str, list[Headline]], top_tickers: list[str]) -> list[dict[str, Any]]:
@@ -727,6 +748,27 @@ class AnalysisService:
                         }
                     )
 
+        construction = behavioral.get("construction", {}) if isinstance(behavioral, dict) else {}
+        if isinstance(construction, dict):
+            projected_top1 = construction.get("projectedTop1")
+            turnover = construction.get("projectedTurnover")
+            if isinstance(projected_top1, (int, float)) and projected_top1 >= 0.42:
+                out.append(
+                    {
+                        "title": "Projected Concentration",
+                        "severity": "medium" if projected_top1 < 0.5 else "high",
+                        "reason": f"Model target book projects top holding at {projected_top1:.0%}.",
+                    }
+                )
+            if isinstance(turnover, (int, float)) and turnover >= 0.28:
+                out.append(
+                    {
+                        "title": "Turnover Pressure",
+                        "severity": "medium",
+                        "reason": f"Model target turnover is {turnover:.0%}; execution costs may rise.",
+                    }
+                )
+
         if not out and risk.get("vol120d") is not None:
             out.append({"title": "No Immediate Alerts", "severity": "low", "reason": "Current signals are not flashing stress."})
 
@@ -758,6 +800,9 @@ class AnalysisService:
             "predictions": base.get("predictions", {}),
             "portfolioActions": list(base.get("portfolioActions", [])),
             "hedgePlan": list(base.get("hedgePlan", [])),
+            "construction": base.get("construction", {}),
+            "alphaBook": base.get("alphaBook", {}),
+            "submodels": base.get("submodels", {}),
         }
 
         ai_pulse = ai.get("pulse")
@@ -1228,6 +1273,140 @@ def _expected_return_5d(opportunity: float, distribution: float, panic: float, e
 
 def _expected_return_20d(opportunity: float, distribution: float, panic: float, event_risk: float, relief: float) -> float:
     return (opportunity * 0.085) - (distribution * 0.056) - (panic * 0.03) - (event_risk * 0.018) + (relief * 0.011) + 0.006
+
+
+def _construct_portfolio_targets(ticker_intel: list[dict[str, Any]], regime_state: str) -> dict[str, Any]:
+    if not ticker_intel:
+        return {"targets": [], "projectedTop1": 0.0, "projectedTurnover": 0.0, "cashBuffer": 0.0}
+
+    cash_buffer = 0.0
+    if regime_state == "stress":
+        cash_buffer = 0.15
+    elif regime_state == "mixed":
+        cash_buffer = 0.08
+    elif regime_state == "overheated":
+        cash_buffer = 0.05
+
+    raw_rows: list[dict[str, float | str]] = []
+    for row in ticker_intel:
+        ticker = row.get("ticker")
+        weight = _as_float(row.get("weight"))
+        alpha = _as_float(row.get("alphaScore"))
+        opp = _as_float(row.get("opportunityIndex"))
+        dist = _as_float(row.get("distributionIndex"))
+        event = _as_float(row.get("eventRisk"))
+        features = row.get("features")
+        quality = _as_float(features.get("qualityScore")) if isinstance(features, dict) else None
+        if not isinstance(ticker, str) or weight is None:
+            continue
+        alpha = alpha or 0.0
+        opp = opp or 0.0
+        dist = dist or 0.0
+        event = event or 0.0
+        quality = quality or 0.5
+        tilt = (alpha * 0.55) + ((opp - dist) * 0.28) + ((quality - 0.5) * 0.17) - (event * 0.22)
+        base = max(0.0, weight + (tilt * 0.14))
+        raw_rows.append({"ticker": ticker, "current": weight, "raw": base})
+
+    if not raw_rows:
+        return {"targets": [], "projectedTop1": 0.0, "projectedTurnover": 0.0, "cashBuffer": cash_buffer}
+
+    budget = max(0.0, 1.0 - cash_buffer)
+    raw_total = sum(float(row["raw"]) for row in raw_rows) or 1.0
+    capped: list[dict[str, float | str]] = []
+    cap = 0.38 if regime_state != "stress" else 0.32
+    for row in raw_rows:
+        target = budget * (float(row["raw"]) / raw_total)
+        capped.append({"ticker": row["ticker"], "current": row["current"], "target": min(cap, max(0.0, target))})
+
+    capped_total = sum(float(row["target"]) for row in capped)
+    if capped_total > 0:
+        scale = budget / capped_total
+        for row in capped:
+            row["target"] = min(cap, float(row["target"]) * scale)
+
+    turnover = 0.0
+    targets: list[dict[str, Any]] = []
+    for row in capped:
+        current = float(row["current"])
+        target = float(row["target"])
+        delta = target - current
+        turnover += abs(delta)
+        targets.append(
+            {
+                "ticker": row["ticker"],
+                "currentWeight": round(current, 4),
+                "targetWeight": round(target, 4),
+                "delta": round(delta, 4),
+            }
+        )
+    targets.sort(key=lambda item: abs(float(item["delta"])), reverse=True)
+    projected_top1 = max((float(row["targetWeight"]) for row in targets), default=0.0)
+    return {
+        "targets": targets,
+        "projectedTop1": round(projected_top1, 4),
+        "projectedTurnover": round(turnover, 4),
+        "cashBuffer": round(cash_buffer, 4),
+    }
+
+
+def _action_book_from_targets(targets: list[dict[str, Any]], ticker_intel: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    if not targets:
+        return []
+    rationale_by_ticker = {
+        str(row.get("ticker")).upper(): str(row.get("rationale") or "Model target adjustment.")
+        for row in ticker_intel
+        if isinstance(row, dict) and isinstance(row.get("ticker"), str)
+    }
+    out: list[dict[str, Any]] = []
+    for row in targets:
+        ticker = row.get("ticker")
+        delta = _as_float(row.get("delta"))
+        if not isinstance(ticker, str) or delta is None:
+            continue
+        if abs(delta) < 0.005:
+            continue
+        if delta >= 0.018:
+            action = "accumulate"
+            urgency = "high"
+        elif delta > 0:
+            action = "add"
+            urgency = "medium"
+        elif delta <= -0.02:
+            action = "trim"
+            urgency = "high"
+        else:
+            action = "reduce"
+            urgency = "medium"
+        out.append(
+            {
+                "ticker": ticker,
+                "action": action,
+                "targetWeightDelta": round(delta, 4),
+                "urgency": urgency,
+                "confidence": 0.62 if urgency == "medium" else 0.74,
+                "reason": rationale_by_ticker.get(ticker.upper(), "Model target adjustment."),
+            }
+        )
+    out.sort(key=lambda item: (item["urgency"] == "high", abs(item["targetWeightDelta"])), reverse=True)
+    return out
+
+
+def _alpha_book(ticker_intel: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
+    scored: list[dict[str, Any]] = []
+    for row in ticker_intel:
+        if not isinstance(row, dict):
+            continue
+        ticker = row.get("ticker")
+        score = _as_float(row.get("alphaScore"))
+        conf = _as_float(row.get("confidence"))
+        if not isinstance(ticker, str) or score is None:
+            continue
+        scored.append({"ticker": ticker, "score": round(score, 3), "confidence": round(conf or 0.5, 3)})
+    scored.sort(key=lambda item: item["score"], reverse=True)
+    longs = [row for row in scored if row["score"] > 0][:5]
+    under = [row for row in reversed(scored) if row["score"] < 0][:5]
+    return {"longBias": longs, "underweightBias": under}
 
 
 def _portfolio_actions(ticker_intel: list[dict[str, Any]], regime_state: str) -> list[dict[str, Any]]:

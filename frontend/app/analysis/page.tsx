@@ -131,6 +131,28 @@ export default function AnalysisPage() {
   const portfolioActions = asRecordArray(signals?.portfolioActions);
   const hedgePlan = asRecordArray(signals?.hedgePlan);
   const regimeProbs = asRecord(regime?.probabilities);
+  const construction = asRecord(signals?.construction);
+  const constructionTargets = asRecordArray(construction?.targets).slice(0, 8);
+  const projectedTop1 = asNumber(construction?.projectedTop1);
+  const projectedTurnover = asNumber(construction?.projectedTurnover);
+  const cashBuffer = asNumber(construction?.cashBuffer);
+  const alphaBook = asRecord(signals?.alphaBook);
+  const alphaLongBias = asRecordArray(alphaBook?.longBias).slice(0, 5);
+  const alphaUnderBias = asRecordArray(alphaBook?.underweightBias).slice(0, 5);
+  const submodels = asRecord(signals?.submodels);
+  const submodelRows = useMemo(() => {
+    if (!submodels) return [] as Array<{ name: string; score: number; confidence: number }>;
+    return Object.entries(submodels)
+      .map(([name, value]) => {
+        const row = asRecord(value);
+        const score = asNumber(row?.score);
+        const confidence = asNumber(row?.confidence);
+        if (score === null || confidence === null) return null;
+        return { name, score, confidence };
+      })
+      .filter((row): row is { name: string; score: number; confidence: number } => row !== null)
+      .sort((a, b) => b.confidence - a.confidence);
+  }, [submodels]);
 
   useEffect(() => {
     if (!scenarios.length) {
@@ -296,6 +318,69 @@ export default function AnalysisPage() {
                           </span>
                         ))}
                       </div>
+                    </article>
+                  </section>
+
+                  <section className="grid two" style={{ marginTop: 14 }}>
+                    <article className="panel signal-panel">
+                      <h3>Model Reliability Stack</h3>
+                      {submodelRows.length === 0 ? (
+                        <div className="status">Submodel telemetry unavailable in this run.</div>
+                      ) : (
+                        <div className="signal-list">
+                          {submodelRows.map((row) => (
+                            <div className="signal-item" key={row.name}>
+                              <div className="signal-head">
+                                <strong>{row.name}</strong>
+                                <span className="severity medium">conf {pct(row.confidence)}</span>
+                              </div>
+                              <div className="signal-meta">model score {pct(row.score)}</div>
+                              <div className="meter-track">
+                                <div className="meter-fill" style={{ width: `${Math.max(4, Math.min(100, row.confidence * 100))}%` }} />
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </article>
+
+                    <article className="panel signal-panel">
+                      <h3>Construction Engine</h3>
+                      <div className="notes">
+                        <div className="note">Projected top holding: {pct(projectedTop1)}</div>
+                        <div className="note">Projected turnover: {pct(projectedTurnover)}</div>
+                        <div className="note">Cash buffer: {pct(cashBuffer)}</div>
+                      </div>
+                      {constructionTargets.length > 0 && (
+                        <div className="table-wrap" style={{ marginTop: 10 }}>
+                          <table>
+                            <thead>
+                              <tr>
+                                <th>Ticker</th>
+                                <th>Current</th>
+                                <th>Target</th>
+                                <th>Delta</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {constructionTargets.map((row, idx) => {
+                                const ticker = typeof row.ticker === "string" ? row.ticker : `T${idx + 1}`;
+                                const current = asNumber(row.currentWeight);
+                                const target = asNumber(row.targetWeight);
+                                const delta = asNumber(row.delta);
+                                return (
+                                  <tr key={`${ticker}-${idx}`}>
+                                    <td className="mono">{ticker}</td>
+                                    <td>{pct(current)}</td>
+                                    <td>{pct(target)}</td>
+                                    <td className={delta !== null && delta < 0 ? "neg" : "pos"}>{pct(delta)}</td>
+                                  </tr>
+                                );
+                              })}
+                            </tbody>
+                          </table>
+                        </div>
+                      )}
                     </article>
                   </section>
 
@@ -675,6 +760,48 @@ export default function AnalysisPage() {
                         </table>
                       </div>
                     )}
+                  </section>
+
+                  <section className="grid two" style={{ marginTop: 14 }}>
+                    <article className="panel">
+                      <h3>Alpha Book: Long Bias</h3>
+                      {alphaLongBias.length === 0 ? (
+                        <div className="status">No long-bias candidates surfaced by this run.</div>
+                      ) : (
+                        <div className="notes" style={{ marginTop: 8 }}>
+                          {alphaLongBias.map((row, idx) => {
+                            const ticker = typeof row.ticker === "string" ? row.ticker : `L${idx + 1}`;
+                            const score = asNumber(row.score);
+                            const confidence = asNumber(row.confidence);
+                            return (
+                              <div className="note" key={`${ticker}-${idx}`}>
+                                <strong>{ticker}</strong> alpha {pct(score)} · confidence {pct(confidence)}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </article>
+
+                    <article className="panel">
+                      <h3>Alpha Book: Underweight Bias</h3>
+                      {alphaUnderBias.length === 0 ? (
+                        <div className="status">No underweight candidates surfaced by this run.</div>
+                      ) : (
+                        <div className="notes" style={{ marginTop: 8 }}>
+                          {alphaUnderBias.map((row, idx) => {
+                            const ticker = typeof row.ticker === "string" ? row.ticker : `U${idx + 1}`;
+                            const score = asNumber(row.score);
+                            const confidence = asNumber(row.confidence);
+                            return (
+                              <div className="note" key={`${ticker}-${idx}`}>
+                                <strong>{ticker}</strong> alpha {pct(score)} · confidence {pct(confidence)}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </article>
                   </section>
 
                   <section className="panel" style={{ marginTop: 14 }}>
