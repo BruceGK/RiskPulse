@@ -49,6 +49,7 @@ export default function AnalysisPage() {
   const [positions, setPositions] = useState<Position[]>([]);
   const [analysis, setAnalysis] = useState<AnalysisResponse | null>(null);
   const [loading, setLoading] = useState(true);
+  const [loadPhase, setLoadPhase] = useState<"idle" | "quick" | "full">("idle");
   const [error, setError] = useState("");
   const [refreshTick, setRefreshTick] = useState(0);
   const [activeScenario, setActiveScenario] = useState("");
@@ -75,15 +76,40 @@ export default function AnalysisPage() {
     if (positions.length === 0) return;
     let active = true;
     const run = async () => {
+      let quickLoaded = false;
       try {
         setLoading(true);
+        setLoadPhase("quick");
         setError("");
-        const response = await analyzePortfolio({ positions });
-        if (active) setAnalysis(response);
+        const quickResponse = await analyzePortfolio({ positions }, { phase: "quick" });
+        if (active) {
+          setAnalysis(quickResponse);
+          quickLoaded = true;
+        }
       } catch (e) {
-        if (active) setError((e as Error).message);
+        if (active) setError(`Quick pass failed, retrying full analysis... (${(e as Error).message})`);
+      }
+
+      if (!active) return;
+      try {
+        setLoadPhase("full");
+        const fullResponse = await analyzePortfolio({ positions }, { phase: "full" });
+        if (active) {
+          setAnalysis(fullResponse);
+          setError("");
+        }
+      } catch (e) {
+        if (!active) return;
+        if (quickLoaded) {
+          setError("Deep analysis failed for this run. Showing quick pass data.");
+        } else {
+          setError((e as Error).message);
+        }
       } finally {
-        if (active) setLoading(false);
+        if (active) {
+          setLoading(false);
+          setLoadPhase("idle");
+        }
       }
     };
     run();
@@ -109,6 +135,13 @@ export default function AnalysisPage() {
   const modelInfo = asRecord(meta?.model);
   const providerEntries = providers ? Object.entries(providers) : [];
   const signals = asRecord(meta?.signals);
+  const fullPending = loadPhase === "full";
+  const loadingMessage =
+    loadPhase === "quick"
+      ? "Loading quick pass (quotes, weights, base KPIs)..."
+      : loadPhase === "full"
+        ? "Hydrating deep analysis (risk, news, AI, signals)..."
+        : "Running analysis against live providers...";
 
   const intelligence = asRecord(meta?.intelligence) || asRecord(signals?.pulse);
   const pulseThesis = typeof intelligence?.thesis === "string" ? intelligence.thesis : "";
@@ -196,7 +229,7 @@ export default function AnalysisPage() {
             Edit Portfolio
           </Link>
           <button className="btn secondary" onClick={() => setRefreshTick((n) => n + 1)} disabled={loading || !positions.length}>
-            {loading ? "Refreshing..." : "Refresh Analysis"}
+            {loadPhase === "quick" ? "Loading Quick Pass..." : loadPhase === "full" ? "Hydrating Deep Analysis..." : "Refresh Analysis"}
           </button>
         </div>
       </header>
@@ -233,7 +266,8 @@ export default function AnalysisPage() {
         </section>
       )}
 
-      {loading && <div className="status">Running analysis against live providers...</div>}
+      {loading && <div className="status">{loadingMessage}</div>}
+      {!loading && fullPending && <div className="status">Deep analysis is still loading in the background...</div>}
       {error && <div className="status error">{error}</div>}
 
       {analysis && (

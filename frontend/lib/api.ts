@@ -3,8 +3,13 @@ import type { AnalysisRequest, AnalysisResponse } from "@/lib/types";
 const RAW_API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL;
 const API_BASE_URL = RAW_API_BASE_URL ? RAW_API_BASE_URL.replace(/\/$/, "") : "";
 
-export async function analyzePortfolio(payload: AnalysisRequest): Promise<AnalysisResponse> {
-  const endpoint = API_BASE_URL ? `${API_BASE_URL}/api/analyze` : "/api/analyze";
+type AnalyzeOptions = {
+  phase?: "quick" | "full";
+};
+
+export async function analyzePortfolio(payload: AnalysisRequest, options?: AnalyzeOptions): Promise<AnalysisResponse> {
+  const phase = options?.phase || "full";
+  const endpoint = API_BASE_URL ? `${API_BASE_URL}/api/analyze?phase=${phase}` : `/api/analyze?phase=${phase}`;
   const response = await fetch(endpoint, {
     method: "POST",
     headers: { "Content-Type": "application/json" },

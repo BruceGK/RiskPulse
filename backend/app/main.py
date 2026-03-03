@@ -1,6 +1,6 @@
 import logging
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.analysis import AnalysisService
@@ -26,10 +26,11 @@ async def health() -> dict[str, str]:
 
 
 @app.post(f"{settings.api_prefix}/analyze", response_model=AnalysisResponse)
-async def analyze(payload: AnalysisRequest) -> AnalysisResponse:
+async def analyze(payload: AnalysisRequest, phase: str = Query(default="full")) -> AnalysisResponse:
     try:
         service = AnalysisService(settings)
-        return await service.analyze(payload)
+        quick_mode = phase.strip().lower() == "quick"
+        return await service.analyze(payload, quick_mode=quick_mode)
     except Exception as exc:
         logger.exception("Analysis request failed")
         raise HTTPException(status_code=500, detail="Analysis failed") from exc

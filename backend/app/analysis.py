@@ -29,7 +29,7 @@ class AnalysisService:
         self.sec = SecProvider(settings)
         self.ai = AiProvider(settings)
 
-    async def analyze(self, req: AnalysisRequest) -> AnalysisResponse:
+    async def analyze(self, req: AnalysisRequest, quick_mode: bool = False) -> AnalysisResponse:
         # Preserve user ticker priority so free-tier rate limits don't starve portfolio quotes.
         tickers = list(dict.fromkeys(p.ticker for p in req.positions))
         macro_overlays = [symbol for symbol in ("SPY", "GLD") if symbol not in tickers]
@@ -71,9 +71,66 @@ class AnalysisService:
 
         position_rows.sort(key=lambda x: x.value, reverse=True)
         top5_weight = sum(row.weight for row in position_rows[:5])
-        risk = await self._compute_risk(position_rows)
-
         macro = self._build_macro_payload(macro_raw, quotes)
+        if quick_mode:
+            risk = {"vol60d": None, "vol120d": None, "maxDrawdown120d": None}
+            news: dict[str, list[Headline]] = {"macro": [], "sec": []}
+            behavioral = {
+                "regime": {"state": "quick-pass"},
+                "tickerIntel": [],
+                "opportunities": [],
+                "exitSignals": [],
+                "predictions": {},
+                "portfolioActions": [],
+                "hedgePlan": [],
+                "construction": {},
+                "alphaBook": {},
+                "submodels": {},
+            }
+            notes: list[str] = []
+            if top5_weight >= 0.7:
+                notes.append(f"Concentration high: top5 {top5_weight:.0%}")
+            if missing_quotes:
+                ticker_list = ", ".join(sorted(set(missing_quotes)))
+                notes.append(f"Missing market data for: {ticker_list}")
+            notes.append("Quick pass loaded. Deep analysis, news, and AI signals are still loading.")
+            data_quality = self._build_data_quality(req, position_rows, macro, news)
+            signals = self._build_signals(position_rows, notes, news, risk, macro, behavioral)
+            meta_payload: dict = {
+                "providers": {
+                    "polygon_enabled": bool(self.settings.polygon_api_key),
+                    "fred_enabled": bool(self.settings.fred_api_key),
+                    "newsapi_enabled": bool(self.settings.newsapi_api_key),
+                    "fmp_enabled": bool(self.settings.fmp_api_key),
+                    "alpha_vantage_enabled": bool(self.settings.alpha_vantage_api_key),
+                    "openbb_enabled": bool(self.settings.openbb_base_url),
+                    "yahoo_enabled": True,
+                    "openai_enabled": bool(self.settings.openai_api_key),
+                },
+                "quoteSources": quote_sources,
+                "dataQuality": data_quality,
+                "signals": signals,
+                "model": {
+                    "name": "riskpulse-quick-pass",
+                    "type": "incremental-load",
+                    "components": ["quotes", "weights", "macro-snapshot"],
+                    "openbbEnriched": self.openbb.enabled,
+                },
+                "progress": {"phase": "quick", "fullPending": True},
+            }
+            return AnalysisResponse(
+                as_of=date.today(),
+                portfolio_value=round(portfolio_value, 2),
+                positions=position_rows,
+                top_concentration={"top5Weight": round(top5_weight, 4)},
+                risk=risk,
+                macro=macro,
+                news=news,
+                notes=notes,
+                meta=meta_payload,
+            )
+
+        risk = await self._compute_risk(position_rows)
         news = await self._build_news_payload(position_rows)
         try:
             behavioral = await self._build_behavioral_intel(position_rows, news, macro)
@@ -142,6 +199,7 @@ class AnalysisService:
                 "components": ["regime", "event-shock", "crowding", "alpha", "construction", "allocation"],
                 "openbbEnriched": self.openbb.enabled,
             },
+            "progress": {"phase": "full", "fullPending": False},
         }
         pulse = signals.get("pulse")
         if isinstance(pulse, dict):
