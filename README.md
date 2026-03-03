@@ -3,7 +3,9 @@
 Azure-ready portfolio + macro analysis MVP.
 
 ## What Is Implemented
-- `backend/`: FastAPI service with `POST /api/analyze`
+- `backend/`: FastAPI service with:
+  - `POST /api/analyze` (supports `?phase=quick|full`)
+  - `POST /api/valuation` (ticker-only intrinsic value pass)
   - market data provider fallback: Polygon -> FMP -> OpenBB -> Yahoo -> Alpha Vantage
   - macro data: FRED (`VIXCLS`, `DGS10`, `DTWEXBGS`) + SPY/GLD market quotes
   - headlines: Polygon -> Alpha Vantage -> NewsAPI fallback
@@ -46,6 +48,45 @@ Response (shape):
   "news": {},
   "notes": [],
   "meta": {}
+}
+```
+
+Quick pass request:
+`POST /api/analyze?phase=quick`
+
+Valuation-only request:
+`POST /api/valuation`
+
+```json
+{
+  "tickers": ["MSFT", "NVDA", "META"]
+}
+```
+
+Valuation-only response (shape):
+```json
+{
+  "as_of": "2026-03-03",
+  "items": [
+    {
+      "ticker": "MSFT",
+      "price": 403.93,
+      "price_source": "yahoo",
+      "fair_value": 526.4,
+      "margin_safety": 0.3032,
+      "verdict": "undervalued",
+      "confidence": 0.71,
+      "valuation_inputs": 6,
+      "methods": [],
+      "providers": {
+        "openbb": false,
+        "alpha_vantage": true,
+        "yahoo_quote_summary": true,
+        "yahoo_quote": true
+      }
+    }
+  ],
+  "notes": []
 }
 ```
 

@@ -9,7 +9,15 @@ from statistics import mean
 from typing import Any
 
 from app.config import Settings
-from app.models import AnalysisRequest, AnalysisResponse, Headline, MacroPoint, PositionAnalysis
+from app.models import (
+    AnalysisRequest,
+    AnalysisResponse,
+    Headline,
+    MacroPoint,
+    PositionAnalysis,
+    ValuationPoint,
+    ValuationResponse,
+)
 from app.providers.ai import AiProvider
 from app.providers.macro import MacroProvider
 from app.providers.market import MarketProvider
@@ -216,6 +224,47 @@ class AnalysisService:
             notes=notes,
             meta=meta_payload,
         )
+
+    async def analyze_valuation(self, tickers: list[str]) -> ValuationResponse:
+        symbols = list(dict.fromkeys(t.strip().upper() for t in tickers if isinstance(t, str) and t.strip()))
+        if not symbols:
+            return ValuationResponse(as_of=date.today(), items=[], notes=["No valid tickers provided."])
+
+        quotes = await self.market.get_quotes(symbols)
+        intel_rows = await asyncio.gather(*(self.openbb.get_ticker_intel(symbol) for symbol in symbols), return_exceptions=True)
+        items: list[ValuationPoint] = []
+        notes: list[str] = []
+        for symbol, intel_raw in zip(symbols, intel_rows, strict=False):
+            quote = quotes.get(symbol)
+            if quote is None:
+                notes.append(f"Missing quote for {symbol}.")
+            intel = intel_raw if isinstance(intel_raw, dict) else {}
+            valuation = _valuation_intel(intel, quote.price if quote else None)
+            methods = valuation.get("methods") if isinstance(valuation.get("methods"), list) else []
+            fallbacks = intel.get("fallbacks") if isinstance(intel.get("fallbacks"), dict) else {}
+            coverage = intel.get("coverage") if isinstance(intel.get("coverage"), dict) else {}
+            val_inputs = coverage.get("valuationInputs")
+            items.append(
+                ValuationPoint(
+                    ticker=symbol,
+                    price=quote.price if quote else None,
+                    price_source=quote.source if quote else None,
+                    fair_value=_as_float(valuation.get("fairValue")),
+                    margin_safety=_as_float(valuation.get("marginSafety")),
+                    verdict=str(valuation.get("verdict") or "unknown"),
+                    confidence=_as_float(valuation.get("confidence")) or 0.0,
+                    valuation_inputs=int(val_inputs) if isinstance(val_inputs, (int, float)) else 0,
+                    methods=[m for m in methods if isinstance(m, dict)][:5],
+                    providers={
+                        "openbb": self.openbb.enabled,
+                        "alpha_vantage": bool(fallbacks.get("alphaVantageOverview")),
+                        "yahoo_quote_summary": bool(fallbacks.get("yahooOverview")),
+                        "yahoo_quote": bool(fallbacks.get("yahooQuote")),
+                    },
+                )
+            )
+
+        return ValuationResponse(as_of=date.today(), items=items, notes=notes)
 
     async def _compute_risk(self, positions: list[PositionAnalysis]) -> dict[str, float | None]:
         if not positions:
