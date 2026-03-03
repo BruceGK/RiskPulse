@@ -329,16 +329,14 @@ class AnalysisService:
 
         history_tasks = [self.market.get_history(p.ticker, self.settings.history_days) for p in tracked]
         spy_task = self.market.get_history("SPY", self.settings.history_days)
-        openbb_tasks = [self.openbb.get_ticker_intel(p.ticker) for p in tracked] if self.openbb.enabled else []
-        if openbb_tasks:
-            histories, spy_history, openbb_rows = await asyncio.gather(
-                asyncio.gather(*history_tasks),
-                spy_task,
-                asyncio.gather(*openbb_tasks, return_exceptions=True),
-            )
-        else:
-            histories, spy_history = await asyncio.gather(asyncio.gather(*history_tasks), spy_task)
-            openbb_rows = [{} for _ in tracked]
+        # Always request ticker intel because provider fallbacks (Yahoo/Alpha Vantage)
+        # are used even when OpenBB base URL is not configured.
+        openbb_tasks = [self.openbb.get_ticker_intel(p.ticker) for p in tracked]
+        histories, spy_history, openbb_rows = await asyncio.gather(
+            asyncio.gather(*history_tasks),
+            spy_task,
+            asyncio.gather(*openbb_tasks, return_exceptions=True),
+        )
         spy_metrics = _price_metrics(spy_history)
 
         macro_panic, macro_relief = _macro_stress_scores(macro)
