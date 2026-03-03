@@ -61,6 +61,7 @@ class OpenBBProvider:
 
         alpha_overview = await self._fetch_alpha_vantage_overview(symbol) if self.settings.alpha_vantage_api_key else None
         yahoo_overview = await self._fetch_yahoo_overview(symbol)
+        yahoo_quote = await self._fetch_yahoo_quote(symbol)
 
         row_profile = _pick_row(profile)
         row_metrics = _pick_row(metrics)
@@ -70,24 +71,29 @@ class OpenBBProvider:
         option_rows = _rows(options)
         row_alpha = alpha_overview if isinstance(alpha_overview, dict) else {}
         row_yahoo = yahoo_overview if isinstance(yahoo_overview, dict) else {}
+        row_yahoo_quote = yahoo_quote if isinstance(yahoo_quote, dict) else {}
 
         pe = _coalesce_float(
             _first_value(row_metrics, ("pe_ratio", "pe", "price_earnings_ratio")),
             row_alpha.get("PERatio"),
             row_yahoo.get("PERatio"),
+            row_yahoo_quote.get("PERatio"),
         )
         pb = _coalesce_float(
             _first_value(row_metrics, ("pb_ratio", "price_to_book", "p_b")),
             row_alpha.get("PriceToBookRatio"),
             row_yahoo.get("PriceToBookRatio"),
+            row_yahoo_quote.get("PriceToBookRatio"),
         )
         ev_ebitda = _coalesce_float(
             _first_value(row_ratios, ("ev_to_ebitda", "enterprise_value_ebitda")),
             row_alpha.get("EVToEBITDA"),
             row_yahoo.get("EVToEBITDA"),
+            row_yahoo_quote.get("EVToEBITDA"),
         )
         fcf_yield = _coalesce_float(_first_value(row_ratios, ("fcf_yield", "free_cash_flow_yield")))
         market_cap = _coalesce_float(row_alpha.get("MarketCapitalization"), row_yahoo.get("MarketCapitalization"))
+        market_cap = _coalesce_float(market_cap, row_yahoo_quote.get("MarketCapitalization"))
         free_cash_flow_ttm = _coalesce_float(
             row_alpha.get("FreeCashFlowTTM"),
             row_alpha.get("OperatingCashflowTTM"),
@@ -100,6 +106,7 @@ class OpenBBProvider:
             _first_value(row_ratios, ("roe", "return_on_equity")),
             row_alpha.get("ReturnOnEquityTTM"),
             row_yahoo.get("ReturnOnEquityTTM"),
+            row_yahoo_quote.get("ReturnOnEquityTTM"),
         )
         gross_margin = _coalesce_float(_first_value(row_ratios, ("gross_margin", "gross_margin_ratio")))
         gross_profit_ttm = _coalesce_float(row_alpha.get("GrossProfitTTM"), row_yahoo.get("GrossProfitTTM"))
@@ -110,39 +117,47 @@ class OpenBBProvider:
             _first_value(row_ratios, ("debt_to_equity", "de_ratio")),
             row_alpha.get("DebtToEquity"),
             row_yahoo.get("DebtToEquity"),
+            row_yahoo_quote.get("DebtToEquity"),
         )
         target_price = _coalesce_float(
             _first_value(row_analyst, ("target_price", "price_target")),
             row_alpha.get("AnalystTargetPrice"),
             row_yahoo.get("AnalystTargetPrice"),
+            row_yahoo_quote.get("AnalystTargetPrice"),
         )
         recommendation = _coalesce_float(
             _first_value(row_analyst, ("recommendation_mean", "rating")),
             row_yahoo.get("recommendationMean"),
+            row_yahoo_quote.get("recommendationMean"),
         )
         short_interest = _coalesce_float(
             _first_value(row_shorts, ("short_interest_percent", "short_percent_float", "short_interest_pct")),
             row_yahoo.get("shortInterestPct"),
+            row_yahoo_quote.get("shortInterestPct"),
         )
         eps_ttm = _coalesce_float(
             _first_value(row_metrics, ("eps", "eps_ttm", "earnings_per_share")),
             row_alpha.get("DilutedEPSTTM"),
             row_yahoo.get("DilutedEPSTTM"),
+            row_yahoo_quote.get("DilutedEPSTTM"),
         )
         book_value_per_share = _coalesce_float(
             _first_value(row_metrics, ("book_value_per_share", "bvps")),
             row_alpha.get("BookValue"),
             row_yahoo.get("BookValue"),
+            row_yahoo_quote.get("BookValue"),
         )
         revenue_growth = _coalesce_float(
             _first_value(row_ratios, ("revenue_growth", "sales_growth", "revenue_growth_yoy")),
             row_alpha.get("QuarterlyRevenueGrowthYOY"),
             row_yahoo.get("QuarterlyRevenueGrowthYOY"),
+            row_yahoo_quote.get("QuarterlyRevenueGrowthYOY"),
         )
         earnings_growth = _coalesce_float(
             _first_value(row_ratios, ("earnings_growth", "eps_growth", "net_income_growth")),
             row_alpha.get("QuarterlyEarningsGrowthYOY"),
             row_yahoo.get("QuarterlyEarningsGrowthYOY"),
+            row_yahoo_quote.get("QuarterlyEarningsGrowthYOY"),
         )
 
         option_skew = _options_skew(option_rows)
@@ -185,6 +200,7 @@ class OpenBBProvider:
             "fallbacks": {
                 "alphaVantageOverview": bool(row_alpha),
                 "yahooOverview": bool(row_yahoo),
+                "yahooQuote": bool(row_yahoo_quote),
             },
         }
         _INTEL_CACHE.set(cache_key, result, ttl_seconds=1800)
@@ -332,6 +348,48 @@ class OpenBBProvider:
         except Exception:
             return None
 
+    async def _fetch_yahoo_quote(self, symbol: str) -> dict[str, Any] | None:
+        url = "https://query1.finance.yahoo.com/v7/finance/quote"
+        params = {"symbols": symbol}
+        headers = {"User-Agent": "Mozilla/5.0 RiskPulse/1.0", "Accept": "application/json"}
+        try:
+            async with httpx.AsyncClient(timeout=self.settings.request_timeout_seconds) as client:
+                resp = await client.get(url, params=params, headers=headers)
+                resp.raise_for_status()
+                payload = resp.json()
+            rows = payload.get("quoteResponse", {}).get("result")
+            if not isinstance(rows, list) or not rows:
+                return None
+            row = rows[0] if isinstance(rows[0], dict) else {}
+            if not row:
+                return None
+            market_cap = _float_or_none(row.get("marketCap"))
+            total_revenue = _float_or_none(row.get("totalRevenue"))
+            return_on_equity = _float_or_none(row.get("returnOnEquity"))
+            debt_to_equity = _float_or_none(row.get("debtToEquity"))
+            if isinstance(debt_to_equity, float) and debt_to_equity > 20:
+                debt_to_equity = debt_to_equity / 100.0
+            return {
+                "AnalystTargetPrice": _float_or_none(row.get("targetMeanPrice")),
+                "PERatio": _float_or_none(row.get("trailingPE")),
+                "PriceToBookRatio": _float_or_none(row.get("priceToBook")),
+                "EVToEBITDA": _float_or_none(row.get("enterpriseToEbitda")),
+                "ReturnOnEquityTTM": return_on_equity,
+                "DebtToEquity": debt_to_equity,
+                "RevenueTTM": total_revenue,
+                "OperatingCashflowTTM": _float_or_none(row.get("operatingCashflow")),
+                "FreeCashFlowTTM": _float_or_none(row.get("freeCashflow")),
+                "DilutedEPSTTM": _float_or_none(row.get("epsTrailingTwelveMonths")),
+                "BookValue": _float_or_none(row.get("bookValue")),
+                "QuarterlyRevenueGrowthYOY": _float_or_none(row.get("revenueGrowth")),
+                "QuarterlyEarningsGrowthYOY": _float_or_none(row.get("earningsGrowth")),
+                "MarketCapitalization": market_cap,
+                "recommendationMean": _floatish(row.get("averageAnalystRating")),
+                "shortInterestPct": _float_or_none(row.get("shortPercentOfFloat")),
+            }
+        except Exception:
+            return None
+
 
 async def _gather_safely(*coros):
     import asyncio
@@ -395,6 +453,19 @@ def _yahoo_number(value: Any) -> float | None:
                     return parsed
         return None
     return _float_or_none(value)
+
+
+def _floatish(value: Any) -> float | None:
+    parsed = _float_or_none(value)
+    if parsed is not None:
+        return parsed
+    if isinstance(value, str):
+        import re
+
+        match = re.search(r"-?\d+(?:\.\d+)?", value)
+        if match:
+            return _float_or_none(match.group(0))
+    return None
 
 
 def _options_put_call(rows: list[dict[str, Any]]) -> float | None:
