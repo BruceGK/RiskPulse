@@ -5,6 +5,10 @@ from typing import Any
 import httpx
 
 from app.config import Settings
+from app.providers.cache import TTLCache
+
+
+_INTEL_CACHE = TTLCache[dict[str, Any]](max_size=4000)
 
 
 class OpenBBProvider:
@@ -16,11 +20,13 @@ class OpenBBProvider:
         return bool(self.settings.openbb_base_url)
 
     async def get_ticker_intel(self, ticker: str) -> dict[str, Any]:
-        if not self.enabled and not self.settings.alpha_vantage_api_key:
-            return {}
         symbol = ticker.upper().strip()
         if not symbol:
             return {}
+        cache_key = f"intel:{symbol}"
+        cached = _INTEL_CACHE.get(cache_key)
+        if cached is not None:
+            return cached
 
         if self.enabled:
             profile_task = self._fetch(
@@ -54,6 +60,7 @@ class OpenBBProvider:
             profile, metrics, ratios, analyst, options, shorts = None, None, None, None, None, None
 
         alpha_overview = await self._fetch_alpha_vantage_overview(symbol) if self.settings.alpha_vantage_api_key else None
+        yahoo_overview = await self._fetch_yahoo_overview(symbol)
 
         row_profile = _pick_row(profile)
         row_metrics = _pick_row(metrics)
@@ -62,70 +69,90 @@ class OpenBBProvider:
         row_shorts = _pick_row(shorts)
         option_rows = _rows(options)
         row_alpha = alpha_overview if isinstance(alpha_overview, dict) else {}
+        row_yahoo = yahoo_overview if isinstance(yahoo_overview, dict) else {}
 
         pe = _coalesce_float(
             _first_value(row_metrics, ("pe_ratio", "pe", "price_earnings_ratio")),
             row_alpha.get("PERatio"),
+            row_yahoo.get("PERatio"),
         )
         pb = _coalesce_float(
             _first_value(row_metrics, ("pb_ratio", "price_to_book", "p_b")),
             row_alpha.get("PriceToBookRatio"),
+            row_yahoo.get("PriceToBookRatio"),
         )
         ev_ebitda = _coalesce_float(
             _first_value(row_ratios, ("ev_to_ebitda", "enterprise_value_ebitda")),
             row_alpha.get("EVToEBITDA"),
+            row_yahoo.get("EVToEBITDA"),
         )
         fcf_yield = _coalesce_float(_first_value(row_ratios, ("fcf_yield", "free_cash_flow_yield")))
-        market_cap = _float_or_none(row_alpha.get("MarketCapitalization"))
-        free_cash_flow_ttm = _coalesce_float(row_alpha.get("FreeCashFlowTTM"), row_alpha.get("OperatingCashflowTTM"))
+        market_cap = _coalesce_float(row_alpha.get("MarketCapitalization"), row_yahoo.get("MarketCapitalization"))
+        free_cash_flow_ttm = _coalesce_float(
+            row_alpha.get("FreeCashFlowTTM"),
+            row_alpha.get("OperatingCashflowTTM"),
+            row_yahoo.get("FreeCashFlowTTM"),
+            row_yahoo.get("OperatingCashflowTTM"),
+        )
         if fcf_yield is None and isinstance(market_cap, float) and market_cap > 0 and isinstance(free_cash_flow_ttm, float):
             fcf_yield = free_cash_flow_ttm / market_cap
         roe = _coalesce_float(
             _first_value(row_ratios, ("roe", "return_on_equity")),
             row_alpha.get("ReturnOnEquityTTM"),
+            row_yahoo.get("ReturnOnEquityTTM"),
         )
         gross_margin = _coalesce_float(_first_value(row_ratios, ("gross_margin", "gross_margin_ratio")))
-        gross_profit_ttm = _float_or_none(row_alpha.get("GrossProfitTTM"))
-        revenue_ttm = _float_or_none(row_alpha.get("RevenueTTM"))
+        gross_profit_ttm = _coalesce_float(row_alpha.get("GrossProfitTTM"), row_yahoo.get("GrossProfitTTM"))
+        revenue_ttm = _coalesce_float(row_alpha.get("RevenueTTM"), row_yahoo.get("RevenueTTM"))
         if gross_margin is None and isinstance(gross_profit_ttm, float) and isinstance(revenue_ttm, float) and revenue_ttm > 0:
             gross_margin = gross_profit_ttm / revenue_ttm
         debt_to_equity = _coalesce_float(
             _first_value(row_ratios, ("debt_to_equity", "de_ratio")),
             row_alpha.get("DebtToEquity"),
+            row_yahoo.get("DebtToEquity"),
         )
         target_price = _coalesce_float(
             _first_value(row_analyst, ("target_price", "price_target")),
             row_alpha.get("AnalystTargetPrice"),
+            row_yahoo.get("AnalystTargetPrice"),
         )
-        recommendation = _float_or_none(_first_value(row_analyst, ("recommendation_mean", "rating")))
-        short_interest = _float_or_none(
-            _first_value(row_shorts, ("short_interest_percent", "short_percent_float", "short_interest_pct"))
+        recommendation = _coalesce_float(
+            _first_value(row_analyst, ("recommendation_mean", "rating")),
+            row_yahoo.get("recommendationMean"),
+        )
+        short_interest = _coalesce_float(
+            _first_value(row_shorts, ("short_interest_percent", "short_percent_float", "short_interest_pct")),
+            row_yahoo.get("shortInterestPct"),
         )
         eps_ttm = _coalesce_float(
             _first_value(row_metrics, ("eps", "eps_ttm", "earnings_per_share")),
             row_alpha.get("DilutedEPSTTM"),
+            row_yahoo.get("DilutedEPSTTM"),
         )
         book_value_per_share = _coalesce_float(
             _first_value(row_metrics, ("book_value_per_share", "bvps")),
             row_alpha.get("BookValue"),
+            row_yahoo.get("BookValue"),
         )
         revenue_growth = _coalesce_float(
             _first_value(row_ratios, ("revenue_growth", "sales_growth", "revenue_growth_yoy")),
             row_alpha.get("QuarterlyRevenueGrowthYOY"),
+            row_yahoo.get("QuarterlyRevenueGrowthYOY"),
         )
         earnings_growth = _coalesce_float(
             _first_value(row_ratios, ("earnings_growth", "eps_growth", "net_income_growth")),
             row_alpha.get("QuarterlyEarningsGrowthYOY"),
+            row_yahoo.get("QuarterlyEarningsGrowthYOY"),
         )
 
         option_skew = _options_skew(option_rows)
         put_call_ratio = _options_put_call(option_rows)
         iv_level = _options_iv_level(option_rows)
 
-        return {
+        result = {
             "provider": "openbb",
-            "sector": _first_value(row_profile, ("sector", "gics_sector")) or None,
-            "industry": _first_value(row_profile, ("industry", "gics_industry")) or None,
+            "sector": _first_value(row_profile, ("sector", "gics_sector")) or row_yahoo.get("sector") or None,
+            "industry": _first_value(row_profile, ("industry", "gics_industry")) or row_yahoo.get("industry") or None,
             "valuation": {
                 "pe": pe,
                 "pb": pb,
@@ -157,8 +184,11 @@ class OpenBBProvider:
             },
             "fallbacks": {
                 "alphaVantageOverview": bool(row_alpha),
+                "yahooOverview": bool(row_yahoo),
             },
         }
+        _INTEL_CACHE.set(cache_key, result, ttl_seconds=1800)
+        return result
 
     async def get_ticker_news(self, ticker: str, limit: int) -> list[dict[str, Any]]:
         if not self.enabled:
@@ -241,6 +271,67 @@ class OpenBBProvider:
         except Exception:
             return None
 
+    async def _fetch_yahoo_overview(self, symbol: str) -> dict[str, Any] | None:
+        modules = "financialData,defaultKeyStatistics,summaryDetail,assetProfile"
+        url = f"https://query2.finance.yahoo.com/v10/finance/quoteSummary/{symbol}"
+        params = {"modules": modules}
+        headers = {"User-Agent": "Mozilla/5.0 RiskPulse/1.0", "Accept": "application/json"}
+        try:
+            async with httpx.AsyncClient(timeout=self.settings.request_timeout_seconds) as client:
+                resp = await client.get(url, params=params, headers=headers)
+                resp.raise_for_status()
+                payload = resp.json()
+            result_rows = payload.get("quoteSummary", {}).get("result")
+            if not isinstance(result_rows, list) or not result_rows:
+                return None
+            row = result_rows[0] if isinstance(result_rows[0], dict) else {}
+            if not row:
+                return None
+            financial_data = row.get("financialData") if isinstance(row.get("financialData"), dict) else {}
+            default_keys = row.get("defaultKeyStatistics") if isinstance(row.get("defaultKeyStatistics"), dict) else {}
+            summary_detail = row.get("summaryDetail") if isinstance(row.get("summaryDetail"), dict) else {}
+            asset_profile = row.get("assetProfile") if isinstance(row.get("assetProfile"), dict) else {}
+
+            debt_to_equity = _yahoo_number(financial_data.get("debtToEquity"))
+            if isinstance(debt_to_equity, float) and debt_to_equity > 20:
+                debt_to_equity = debt_to_equity / 100.0
+
+            return {
+                "AnalystTargetPrice": _yahoo_number(financial_data.get("targetMeanPrice")),
+                "PERatio": _coalesce_float(
+                    _yahoo_number(summary_detail.get("trailingPE")),
+                    _yahoo_number(default_keys.get("trailingPE")),
+                ),
+                "PriceToBookRatio": _coalesce_float(
+                    _yahoo_number(default_keys.get("priceToBook")),
+                    _yahoo_number(financial_data.get("priceToBook")),
+                ),
+                "EVToEBITDA": _yahoo_number(default_keys.get("enterpriseToEbitda")),
+                "ReturnOnEquityTTM": _yahoo_number(financial_data.get("returnOnEquity")),
+                "DebtToEquity": debt_to_equity,
+                "GrossProfitTTM": _yahoo_number(financial_data.get("grossProfits")),
+                "RevenueTTM": _coalesce_float(
+                    _yahoo_number(financial_data.get("totalRevenue")),
+                    _yahoo_number(default_keys.get("totalRevenue")),
+                ),
+                "OperatingCashflowTTM": _yahoo_number(financial_data.get("operatingCashflow")),
+                "FreeCashFlowTTM": _yahoo_number(financial_data.get("freeCashflow")),
+                "DilutedEPSTTM": _yahoo_number(default_keys.get("trailingEps")),
+                "BookValue": _yahoo_number(default_keys.get("bookValue")),
+                "QuarterlyRevenueGrowthYOY": _yahoo_number(financial_data.get("revenueGrowth")),
+                "QuarterlyEarningsGrowthYOY": _yahoo_number(financial_data.get("earningsGrowth")),
+                "MarketCapitalization": _coalesce_float(
+                    _yahoo_number(summary_detail.get("marketCap")),
+                    _yahoo_number(default_keys.get("marketCap")),
+                ),
+                "recommendationMean": _yahoo_number(financial_data.get("recommendationMean")),
+                "shortInterestPct": _yahoo_number(default_keys.get("shortPercentOfFloat")),
+                "sector": asset_profile.get("sector"),
+                "industry": asset_profile.get("industry"),
+            }
+        except Exception:
+            return None
+
 
 async def _gather_safely(*coros):
     import asyncio
@@ -293,6 +384,17 @@ def _coalesce_float(*values: Any) -> float | None:
         if parsed is not None:
             return parsed
     return None
+
+
+def _yahoo_number(value: Any) -> float | None:
+    if isinstance(value, dict):
+        for key in ("raw", "longFmt", "fmt"):
+            if key in value:
+                parsed = _float_or_none(value.get(key))
+                if parsed is not None:
+                    return parsed
+        return None
+    return _float_or_none(value)
 
 
 def _options_put_call(rows: list[dict[str, Any]]) -> float | None:
