@@ -4,7 +4,7 @@ Azure-ready portfolio + macro analysis MVP.
 
 ## What Is Implemented
 - `backend/`: FastAPI service with `POST /api/analyze`
-  - market data provider fallback: Polygon -> FMP -> Yahoo -> Alpha Vantage
+  - market data provider fallback: Polygon -> FMP -> OpenBB -> Yahoo -> Alpha Vantage
   - macro data: FRED (`VIXCLS`, `DGS10`, `DTWEXBGS`) + SPY/GLD market quotes
   - headlines: Polygon -> Alpha Vantage -> NewsAPI fallback
   - in-memory TTL cache for prices, history, macro series, and news to reduce API quota pressure
@@ -92,6 +92,7 @@ Recommended architecture:
 - Production-grade sources should be licensed APIs, not scraping.
 - OpenAI does not provide raw live market/news feed; it should consume provider output.
 - SEC API requires a real contact in `SEC_USER_AGENT`.
+- OpenBB integration is optional and expects a running OpenBB API service.
 
 ## GitHub Actions Secrets
 Set these repository secrets before enabling CI/CD:
@@ -122,6 +123,8 @@ Optional runtime secrets for backend (store in Container App / Key Vault, not in
 - `ALPHA_VANTAGE_API_KEY`
 - `FRED_API_KEY`
 - `NEWSAPI_API_KEY`
+- `OPENBB_BASE_URL` (optional self-hosted OpenBB API endpoint, e.g. `http://openbb:6900`)
+- `OPENBB_PROVIDER` (default `yfinance`)
 - `OPENAI_API_KEY`
 - `OPENAI_MODEL` (recommended low-cost default: `gpt-4.1-nano`)
 - `SEC_USER_AGENT`

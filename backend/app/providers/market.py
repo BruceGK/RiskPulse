@@ -35,6 +35,7 @@ class MarketProvider:
 
         pending = await self._merge_quotes(out, pending, self._fetch_polygon_quotes)
         pending = await self._merge_quotes(out, pending, self._fetch_fmp_quotes)
+        pending = await self._merge_quotes(out, pending, self._fetch_openbb_quotes)
         # Preserve Alpha Vantage quota for news fallback on free-tier setups.
         pending = await self._merge_quotes(out, pending, self._fetch_yahoo_quotes)
         pending = await self._merge_quotes(out, pending, self._fetch_yahoo_chart_quotes)
@@ -55,6 +56,7 @@ class MarketProvider:
         fetchers = (
             self._fetch_polygon_history,
             self._fetch_fmp_history,
+            self._fetch_openbb_history,
             self._fetch_yahoo_history,
             self._fetch_alpha_vantage_history,
         )
@@ -125,6 +127,27 @@ class MarketProvider:
                         prev_close=float(prev) if prev else None,
                         source="fmp",
                     )
+            return out
+        except Exception:
+            return {}
+
+    async def _fetch_openbb_quotes(self, tickers: list[str]) -> dict[str, Quote]:
+        if not self.settings.openbb_base_url:
+            return {}
+        url = f"{self.settings.openbb_base_url.rstrip('/')}/api/v1/equity/price/quote"
+        params = {"symbol": ",".join(tickers), "provider": self.settings.openbb_provider}
+        try:
+            async with httpx.AsyncClient(timeout=self.settings.request_timeout_seconds) as client:
+                resp = await client.get(url, params=params)
+                resp.raise_for_status()
+                payload = resp.json()
+            out: dict[str, Quote] = {}
+            for row in _openbb_rows(payload):
+                symbol = str(row.get("symbol") or row.get("ticker") or "").upper().strip()
+                price = _safe_float(row.get("last_price") or row.get("price") or row.get("close"))
+                prev = _safe_float(row.get("prev_close") or row.get("previous_close") or row.get("close_prev"))
+                if symbol and price:
+                    out[symbol] = Quote(ticker=symbol, price=price, prev_close=prev, source="openbb")
             return out
         except Exception:
             return {}
@@ -252,6 +275,31 @@ class MarketProvider:
         except Exception:
             return []
 
+    async def _fetch_openbb_history(self, ticker: str, days: int) -> list[float]:
+        if not self.settings.openbb_base_url:
+            return []
+        end = date.today()
+        start = end - timedelta(days=max(days * 2, 180))
+        url = f"{self.settings.openbb_base_url.rstrip('/')}/api/v1/equity/price/historical"
+        params = {
+            "symbol": ticker,
+            "provider": self.settings.openbb_provider,
+            "interval": "1d",
+            "start_date": start.isoformat(),
+            "end_date": end.isoformat(),
+        }
+        try:
+            async with httpx.AsyncClient(timeout=self.settings.request_timeout_seconds) as client:
+                resp = await client.get(url, params=params)
+                resp.raise_for_status()
+                payload = resp.json()
+            rows = _openbb_rows(payload)
+            closes = [_safe_float(row.get("close") or row.get("adj_close") or row.get("last_price")) for row in rows]
+            out = [value for value in closes if value is not None]
+            return out[-days:]
+        except Exception:
+            return []
+
     async def _fetch_yahoo_history(self, ticker: str, days: int) -> list[float]:
         end = int(datetime.now(tz=UTC).timestamp())
         start = int((datetime.now(tz=UTC) - timedelta(days=max(days * 2, 180))).timestamp())
@@ -299,3 +347,26 @@ class MarketProvider:
 
 def _alpha_vantage_is_limited(payload: dict) -> bool:
     return bool(payload.get("Note") or payload.get("Information") or payload.get("Error Message"))
+
+
+def _openbb_rows(payload: object) -> list[dict]:
+    if isinstance(payload, list):
+        return [row for row in payload if isinstance(row, dict)]
+    if not isinstance(payload, dict):
+        return []
+    if isinstance(payload.get("results"), list):
+        return [row for row in payload["results"] if isinstance(row, dict)]
+    if isinstance(payload.get("data"), list):
+        return [row for row in payload["data"] if isinstance(row, dict)]
+    if isinstance(payload.get("items"), list):
+        return [row for row in payload["items"] if isinstance(row, dict)]
+    return []
+
+
+def _safe_float(value: object) -> float | None:
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None

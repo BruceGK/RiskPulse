@@ -26,6 +26,8 @@ class Settings(BaseSettings):
     alpha_vantage_api_key: str = ""
     fred_api_key: str = ""
     newsapi_api_key: str = ""
+    openbb_base_url: str = ""
+    openbb_provider: str = "yfinance"
     openai_api_key: str = ""
     openai_model: str = "gpt-4.1-nano"
     ai_cache_ttl_seconds: int = 1800
