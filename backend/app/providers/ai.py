@@ -51,15 +51,19 @@ class AiProvider:
                 resp = await client.post("https://api.openai.com/v1/responses", headers=headers, json=body)
                 resp.raise_for_status()
                 data = resp.json()
-            text = data.get("output_text")
-            if not isinstance(text, str) or not text.strip():
+            text = _extract_output_text(data)
+            if not text:
                 return None
             parsed = _extract_json(text)
-            if not parsed:
-                return None
-            thesis = parsed.get("thesis")
-            stance = parsed.get("stance")
-            focus = parsed.get("focus")
+            if parsed:
+                thesis = parsed.get("thesis")
+                stance = parsed.get("stance")
+                focus = parsed.get("focus")
+            else:
+                # Fallback: keep the interface usable even when model returns plain text.
+                thesis = text.strip()
+                stance = "balanced"
+                focus = []
             if not isinstance(thesis, str) or not thesis.strip():
                 return None
             if stance not in {"risk-on", "balanced", "risk-off"}:
@@ -89,3 +93,27 @@ def _extract_json(text: str) -> dict[str, Any] | None:
         return data if isinstance(data, dict) else None
     except Exception:
         return None
+
+
+def _extract_output_text(payload: dict[str, Any]) -> str:
+    text = payload.get("output_text")
+    if isinstance(text, str) and text.strip():
+        return text.strip()
+
+    out: list[str] = []
+    output = payload.get("output")
+    if not isinstance(output, list):
+        return ""
+    for item in output:
+        if not isinstance(item, dict):
+            continue
+        content = item.get("content")
+        if not isinstance(content, list):
+            continue
+        for block in content:
+            if not isinstance(block, dict):
+                continue
+            block_text = block.get("text")
+            if isinstance(block_text, str) and block_text.strip():
+                out.append(block_text.strip())
+    return "\n".join(out).strip()
