@@ -1,0 +1,31 @@
+from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+
+from app.analysis import AnalysisService
+from app.config import get_settings
+from app.models import AnalysisRequest, AnalysisResponse
+
+settings = get_settings()
+app = FastAPI(title=settings.app_name)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=False,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+
+@app.get("/health")
+async def health() -> dict[str, str]:
+    return {"status": "ok"}
+
+
+@app.post(f"{settings.api_prefix}/analyze", response_model=AnalysisResponse)
+async def analyze(payload: AnalysisRequest) -> AnalysisResponse:
+    try:
+        service = AnalysisService(settings)
+        return await service.analyze(payload)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail="Analysis failed") from exc
