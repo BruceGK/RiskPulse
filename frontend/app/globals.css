@@ -414,6 +414,65 @@ a {
   color: var(--muted);
 }
 
+.signal-panel {
+  position: relative;
+  overflow: hidden;
+}
+
+.signal-panel::after {
+  content: "";
+  position: absolute;
+  width: 180px;
+  height: 180px;
+  border-radius: 999px;
+  right: -70px;
+  top: -90px;
+  background: radial-gradient(circle, rgba(90, 137, 255, 0.14), rgba(90, 137, 255, 0));
+  pointer-events: none;
+}
+
+.signal-list {
+  display: grid;
+  gap: 9px;
+}
+
+.signal-item {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 10px;
+  background: #fff;
+  position: relative;
+  z-index: 1;
+}
+
+.signal-item.opportunity {
+  border-left: 4px solid #38a169;
+}
+
+.signal-item.exit {
+  border-left: 4px solid #d64d5f;
+}
+
+.signal-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.signal-meta {
+  margin-top: 5px;
+  font-size: 0.78rem;
+  color: #4d6582;
+}
+
+.signal-text {
+  margin-top: 6px;
+  color: var(--muted);
+  font-size: 0.85rem;
+  line-height: 1.32;
+}
+
 .radar-list {
   gap: 8px;
 }

@@ -17,6 +17,9 @@ class Settings(BaseSettings):
     news_cache_ttl_seconds: int = 900
     alpha_vantage_max_calls_per_request: int = 4
     max_positions_for_risk: int = 5
+    max_positions_for_intel: int = 8
+    max_ticker_news_symbols: int = 5
+    ticker_news_per_symbol: int = 5
 
     polygon_api_key: str = ""
     fmp_api_key: str = ""

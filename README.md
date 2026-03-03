@@ -4,13 +4,14 @@ Azure-ready portfolio + macro analysis MVP.
 
 ## What Is Implemented
 - `backend/`: FastAPI service with `POST /api/analyze`
-  - market data provider fallback: Polygon -> FMP -> Alpha Vantage -> Yahoo
+  - market data provider fallback: Polygon -> FMP -> Yahoo -> Alpha Vantage
   - macro data: FRED (`VIXCLS`, `DGS10`, `DTWEXBGS`) + SPY/GLD market quotes
   - headlines: Polygon -> Alpha Vantage -> NewsAPI fallback
   - in-memory TTL cache for prices, history, macro series, and news to reduce API quota pressure
   - free-tier safeguards (Alpha Vantage call cap and graceful throttling fallback)
   - SEC filing hints for top holdings
-  - optional low-cost OpenAI "Market Pulse" intelligence (cached to reduce repeated token spend)
+  - behavioral signal model for panic/crowding/dislocation and ticker-level action bias
+  - optional low-cost OpenAI narrative refinement (cached to reduce repeated token spend)
 - `frontend/`: Next.js app
   - `/portfolio` position entry
   - `/analysis` dashboard rendering API output
@@ -124,3 +125,8 @@ Optional runtime secrets for backend (store in Container App / Key Vault, not in
 - `OPENAI_API_KEY`
 - `OPENAI_MODEL` (recommended low-cost default: `gpt-4.1-nano`)
 - `SEC_USER_AGENT`
+
+Optional runtime tuning knobs:
+- `MAX_POSITIONS_FOR_INTEL` (default `8`)
+- `MAX_TICKER_NEWS_SYMBOLS` (default `5`)
+- `TICKER_NEWS_PER_SYMBOL` (default `5`)

@@ -3,7 +3,8 @@ from __future__ import annotations
 import asyncio
 import math
 import re
-from datetime import date
+from datetime import UTC, date, datetime
+from email.utils import parsedate_to_datetime
 from statistics import mean
 from typing import Any
 
@@ -72,6 +73,7 @@ class AnalysisService:
 
         macro = self._build_macro_payload(macro_raw, quotes)
         news = await self._build_news_payload(position_rows)
+        behavioral = await self._build_behavioral_intel(position_rows, news, macro)
         notes = self._build_notes(top5_weight, risk, missing_quotes, news)
         if missing_quotes and self.settings.alpha_vantage_api_key and not (
             self.settings.polygon_api_key or self.settings.fmp_api_key
@@ -82,7 +84,7 @@ class AnalysisService:
                 f"Risk metrics computed on top {self.settings.max_positions_for_risk} holdings by market value."
             )
         data_quality = self._build_data_quality(req, position_rows, macro, news)
-        deterministic_signals = self._build_signals(position_rows, notes, news, risk, macro)
+        deterministic_signals = self._build_signals(position_rows, notes, news, risk, macro, behavioral)
         ai_signals = await self.ai.build_signals(
             {
                 "asOf": date.today().isoformat(),
@@ -91,6 +93,7 @@ class AnalysisService:
                 "risk": risk,
                 "macro": {k: v.model_dump() for k, v in macro.items()},
                 "notes": notes[:6],
+                "behavioral": behavioral,
                 "macroNews": [h.model_dump() for h in news.get("macro", [])[:8]],
                 "tickerNews": {
                     ticker: [h.model_dump() for h in items[:3]]
@@ -114,6 +117,7 @@ class AnalysisService:
             "quoteSources": quote_sources,
             "dataQuality": data_quality,
             "signals": signals,
+            "model": {"name": "riskpulse-behavioral-v1", "type": "multi-factor-event"},
         }
         pulse = signals.get("pulse")
         if isinstance(pulse, dict):
@@ -194,8 +198,8 @@ class AnalysisService:
         macro_items = await self.news.get_macro_news(limit=min(self.settings.news_limit, 10))
         result["macro"] = [Headline(**item.__dict__) for item in macro_items]
 
-        top_tickers = [p.ticker for p in positions[:2]]
-        tasks = [self.news.get_ticker_news(ticker, limit=5) for ticker in top_tickers]
+        top_tickers = [p.ticker for p in positions[: self.settings.max_ticker_news_symbols]]
+        tasks = [self.news.get_ticker_news(ticker, limit=self.settings.ticker_news_per_symbol) for ticker in top_tickers]
         ticker_news_lists = await asyncio.gather(*tasks) if tasks else []
         for ticker, items in zip(top_tickers, ticker_news_lists, strict=False):
             result[ticker] = [Headline(**item.__dict__) for item in items]
@@ -220,6 +224,147 @@ class AnalysisService:
 
         return result
 
+    async def _build_behavioral_intel(
+        self,
+        positions: list[PositionAnalysis],
+        news: dict[str, list[Headline]],
+        macro: dict[str, MacroPoint],
+    ) -> dict[str, Any]:
+        tracked = positions[: self.settings.max_positions_for_intel]
+        if not tracked:
+            return {"regime": {"state": "insufficient-data"}, "tickerIntel": [], "opportunities": [], "exitSignals": []}
+
+        history_tasks = [self.market.get_history(p.ticker, self.settings.history_days) for p in tracked]
+        spy_task = self.market.get_history("SPY", self.settings.history_days)
+        histories, spy_history = await asyncio.gather(asyncio.gather(*history_tasks), spy_task)
+        spy_metrics = _price_metrics(spy_history)
+
+        macro_panic, macro_relief = _macro_stress_scores(macro)
+        macro_news = news.get("macro", [])[:10]
+        macro_risk_up = 0
+        for item in macro_news:
+            impact, direction, _ = _classify_headline(item.title, sentiment_hint=item.sentiment_hint)
+            if direction == "risk-up":
+                macro_risk_up += 1 if impact == "high" else 0.6
+        macro_shock = _clamp01(macro_risk_up / 4.0)
+
+        ticker_intel: list[dict[str, Any]] = []
+        opportunities: list[dict[str, Any]] = []
+        exit_signals: list[dict[str, Any]] = []
+        for p, series in zip(tracked, histories, strict=False):
+            metrics = _price_metrics(series)
+            returns_count = int(metrics.get("returnsCount", 0))
+            ticker_news = news.get(p.ticker, [])[: self.settings.ticker_news_per_symbol]
+            news_stats = _ticker_news_stats(ticker_news)
+
+            ret20 = metrics.get("ret20")
+            spy_ret20 = spy_metrics.get("ret20")
+            relative_20 = (ret20 - spy_ret20) if ret20 is not None and spy_ret20 is not None else None
+            location = metrics.get("rangeLoc")
+            drawdown = metrics.get("drawdown120") or 0.0
+            ret5 = metrics.get("ret5") or 0.0
+            vol_ratio = metrics.get("volRatio") or 1.0
+
+            oversold = _clamp01(
+                (max(0.0, -ret5 - 0.015) / 0.08) * 0.25
+                + (max(0.0, -(ret20 or 0.0) - 0.04) / 0.16) * 0.25
+                + (max(0.0, 0.35 - (location if location is not None else 0.5)) / 0.35) * 0.2
+                + (max(0.0, drawdown - 0.1) / 0.2) * 0.15
+                + (max(0.0, news_stats["riskUpShare"] - 0.55) / 0.45) * 0.15
+            )
+            overheated = _clamp01(
+                (max(0.0, ret5 - 0.018) / 0.08) * 0.25
+                + (max(0.0, (ret20 or 0.0) - 0.04) / 0.16) * 0.25
+                + (max(0.0, (location if location is not None else 0.5) - 0.7) / 0.3) * 0.2
+                + (max(0.0, news_stats["riskDownShare"] - 0.55) / 0.45) * 0.15
+                + (max(0.0, news_stats["buzz"] - 0.5) / 0.5) * 0.15
+            )
+
+            vol_spike_factor = min(1.0, max(0.0, vol_ratio - 0.8))
+            panic_score = _clamp01((oversold * 0.55) + (vol_spike_factor * 0.25) + (macro_panic * 0.2))
+            crowding_score = _clamp01((overheated * 0.6) + (news_stats["buzz"] * 0.15) + (p.weight * 0.25))
+            opportunity_index = _clamp01((panic_score * 0.65) + (max(0.0, 0.55 - crowding_score) * 0.35))
+            distribution_index = _clamp01((crowding_score * 0.7) + (max(0.0, 0.45 - panic_score) * 0.3))
+            confidence = _signal_confidence(returns_count, len(ticker_news), relative_20)
+
+            action_bias = _action_bias(opportunity_index, distribution_index, macro_panic, news_stats["eventRisk"])
+            rationale = _action_rationale(
+                action_bias=action_bias,
+                ret5=ret5,
+                ret20=ret20,
+                drawdown=drawdown,
+                location=location,
+                risk_up_share=news_stats["riskUpShare"],
+                risk_down_share=news_stats["riskDownShare"],
+                relative_20=relative_20,
+            )
+
+            intel_row = {
+                "ticker": p.ticker,
+                "weight": round(p.weight, 4),
+                "panicScore": round(panic_score, 3),
+                "crowdingScore": round(crowding_score, 3),
+                "opportunityIndex": round(opportunity_index, 3),
+                "distributionIndex": round(distribution_index, 3),
+                "eventRisk": round(news_stats["eventRisk"], 3),
+                "actionBias": action_bias,
+                "confidence": round(confidence, 3),
+                "themes": news_stats["themes"][:4],
+                "headlineCount": len(ticker_news),
+                "rationale": rationale,
+                "features": {
+                    "ret5d": round(ret5, 4) if ret5 is not None else None,
+                    "ret20d": round(ret20, 4) if ret20 is not None else None,
+                    "relative20dVsSPY": round(relative_20, 4) if relative_20 is not None else None,
+                    "drawdown120d": round(drawdown, 4) if drawdown is not None else None,
+                    "rangeLocation120d": round(location, 4) if location is not None else None,
+                    "volatilityRatio": round(vol_ratio, 3) if vol_ratio is not None else None,
+                },
+            }
+            ticker_intel.append(intel_row)
+
+            if opportunity_index >= 0.67 and confidence >= 0.45:
+                opportunities.append(
+                    {
+                        "ticker": p.ticker,
+                        "score": round(opportunity_index, 3),
+                        "confidence": round(confidence, 3),
+                        "signal": "undervaluation-window",
+                        "reason": rationale,
+                    }
+                )
+            if distribution_index >= 0.67 and confidence >= 0.45:
+                exit_signals.append(
+                    {
+                        "ticker": p.ticker,
+                        "score": round(distribution_index, 3),
+                        "confidence": round(confidence, 3),
+                        "signal": "crowded-upside",
+                        "reason": rationale,
+                    }
+                )
+
+        weighted_panic = _weighted_signal(ticker_intel, "panicScore")
+        weighted_crowding = _weighted_signal(ticker_intel, "crowdingScore")
+        regime_panic = _clamp01((weighted_panic * 0.6) + (macro_panic * 0.25) + (macro_shock * 0.15))
+        regime_crowding = _clamp01((weighted_crowding * 0.7) + (macro_relief * 0.2) + (1 - macro_shock) * 0.1)
+        regime_state = _regime_label(regime_panic, regime_crowding)
+
+        opportunities.sort(key=lambda row: (row["score"], row["confidence"]), reverse=True)
+        exit_signals.sort(key=lambda row: (row["score"], row["confidence"]), reverse=True)
+        ticker_intel.sort(key=lambda row: row.get("weight", 0), reverse=True)
+        return {
+            "regime": {
+                "state": regime_state,
+                "panicScore": round(regime_panic, 3),
+                "crowdingScore": round(regime_crowding, 3),
+                "macroShock": round(macro_shock, 3),
+            },
+            "tickerIntel": ticker_intel,
+            "opportunities": opportunities[:4],
+            "exitSignals": exit_signals[:4],
+        }
+
     def _build_signals(
         self,
         positions: list[PositionAnalysis],
@@ -227,12 +372,13 @@ class AnalysisService:
         news: dict[str, list[Headline]],
         risk: dict[str, float | None],
         macro: dict[str, MacroPoint],
+        behavioral: dict[str, Any],
     ) -> dict[str, Any]:
         top_tickers = [p.ticker for p in positions[:5]]
         radar = self._build_headline_radar(news, top_tickers)
-        watchouts = self._build_watchouts(positions, radar)
+        watchouts = self._build_watchouts(positions, radar, behavioral)
         scenarios = self._build_scenarios(positions)
-        warnings = self._build_warnings(notes, risk, macro, radar, scenarios)
+        warnings = self._build_warnings(notes, risk, macro, radar, scenarios, behavioral)
         pulse = _build_pulse(warnings, scenarios)
         return {
             "pulse": pulse,
@@ -240,6 +386,10 @@ class AnalysisService:
             "watchouts": watchouts,
             "radar": radar,
             "scenarios": scenarios,
+            "regime": behavioral.get("regime", {}),
+            "tickerIntel": behavioral.get("tickerIntel", []),
+            "opportunities": behavioral.get("opportunities", []),
+            "exitSignals": behavioral.get("exitSignals", []),
         }
 
     def _build_headline_radar(self, news: dict[str, list[Headline]], top_tickers: list[str]) -> list[dict[str, Any]]:
@@ -288,7 +438,17 @@ class AnalysisService:
         entries.sort(key=lambda row: (_impact_score(row["impact"]), row["direction"] == "risk-up"), reverse=True)
         return entries[:14]
 
-    def _build_watchouts(self, positions: list[PositionAnalysis], radar: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    def _build_watchouts(
+        self,
+        positions: list[PositionAnalysis],
+        radar: list[dict[str, Any]],
+        behavioral: dict[str, Any],
+    ) -> list[dict[str, Any]]:
+        ticker_intel = {
+            row.get("ticker"): row
+            for row in behavioral.get("tickerIntel", [])
+            if isinstance(row, dict) and isinstance(row.get("ticker"), str)
+        }
         out: list[dict[str, Any]] = []
         for p in positions[:10]:
             severity_rank = 0
@@ -317,6 +477,21 @@ class AnalysisService:
             elif risk_up_hits == 1:
                 severity_rank = max(severity_rank, 1)
                 reasons.append("Recent headline flow adds short-term uncertainty.")
+
+            intel = ticker_intel.get(p.ticker)
+            if isinstance(intel, dict):
+                action_bias = str(intel.get("actionBias") or "")
+                if action_bias == "accumulate-on-weakness":
+                    severity_rank = max(severity_rank, 1)
+                    opp_score = intel.get("opportunityIndex") if isinstance(intel.get("opportunityIndex"), (int, float)) else 0.0
+                    reasons.append(f"Dislocation setup score {opp_score:.2f}.")
+                elif action_bias == "trim-into-strength":
+                    severity_rank = max(severity_rank, 2)
+                    dist_score = intel.get("distributionIndex") if isinstance(intel.get("distributionIndex"), (int, float)) else 0.0
+                    reasons.append(f"Crowding setup score {dist_score:.2f}.")
+                elif action_bias == "de-risk-hedge":
+                    severity_rank = max(severity_rank, 2)
+                    reasons.append("Panic and event-risk scores are elevated; hedge posture is favored.")
 
             severity = _severity_from_rank(severity_rank)
             text = " ".join(reasons[:2]) if reasons else "No acute pressure signals in this run."
@@ -368,6 +543,7 @@ class AnalysisService:
         macro: dict[str, MacroPoint],
         radar: list[dict[str, Any]],
         scenarios: list[dict[str, Any]],
+        behavioral: dict[str, Any],
     ) -> list[dict[str, str]]:
         out: list[dict[str, str]] = []
         for note in notes:
@@ -412,6 +588,42 @@ class AnalysisService:
                     }
                 )
 
+        regime = behavioral.get("regime", {}) if isinstance(behavioral, dict) else {}
+        regime_state = regime.get("state")
+        regime_panic = regime.get("panicScore")
+        if regime_state == "stress" and isinstance(regime_panic, (int, float)):
+            out.append(
+                {
+                    "title": "Regime Stress",
+                    "severity": "high",
+                    "reason": f"Panic regime score is {regime_panic:.2f}; prioritize capital preservation.",
+                }
+            )
+
+        opportunities = behavioral.get("opportunities", []) if isinstance(behavioral, dict) else []
+        if isinstance(opportunities, list) and opportunities:
+            top = opportunities[0] if isinstance(opportunities[0], dict) else None
+            if top and isinstance(top.get("ticker"), str):
+                out.append(
+                    {
+                        "title": "Dislocation Opportunity",
+                        "severity": "medium",
+                        "reason": f"{top['ticker']} screens as an oversold setup with confirmation from multi-factor scores.",
+                    }
+                )
+
+        exit_signals = behavioral.get("exitSignals", []) if isinstance(behavioral, dict) else []
+        if isinstance(exit_signals, list) and exit_signals:
+            top = exit_signals[0] if isinstance(exit_signals[0], dict) else None
+            if top and isinstance(top.get("ticker"), str):
+                out.append(
+                    {
+                        "title": "Crowding Distribution Risk",
+                        "severity": "medium",
+                        "reason": f"{top['ticker']} shows a crowded-upside pattern where trimming into strength is favored.",
+                    }
+                )
+
         if not out and risk.get("vol120d") is not None:
             out.append({"title": "No Immediate Alerts", "severity": "low", "reason": "Current signals are not flashing stress."})
 
@@ -436,6 +648,10 @@ class AnalysisService:
             "watchouts": list(base.get("watchouts", [])),
             "radar": list(base.get("radar", [])),
             "scenarios": list(base.get("scenarios", [])),
+            "regime": base.get("regime", {}),
+            "tickerIntel": list(base.get("tickerIntel", [])),
+            "opportunities": list(base.get("opportunities", [])),
+            "exitSignals": list(base.get("exitSignals", [])),
         }
 
         ai_pulse = ai.get("pulse")
@@ -509,6 +725,9 @@ class AnalysisService:
         merged["warnings"] = merged["warnings"][:6]
         merged["watchouts"] = merged["watchouts"][:10]
         merged["radar"] = merged["radar"][:14]
+        merged["tickerIntel"] = merged["tickerIntel"][:10]
+        merged["opportunities"] = merged["opportunities"][:4]
+        merged["exitSignals"] = merged["exitSignals"][:4]
         return merged
 
     @staticmethod
@@ -615,6 +834,278 @@ _RISK_DOWN_KEYWORDS = (
 )
 _INTRADAY_KEYWORDS = ("today", "now", "overnight")
 _WEEK_KEYWORDS = ("this week", "week", "next week", "days")
+_SENTIMENT_POSITIVE = (
+    "beats",
+    "beat",
+    "upgrade",
+    "buyback",
+    "partnership",
+    "record",
+    "growth",
+    "strong demand",
+    "rebound",
+    "rally",
+)
+_SENTIMENT_NEGATIVE = (
+    "misses",
+    "miss",
+    "downgrade",
+    "investigation",
+    "lawsuit",
+    "probe",
+    "warning",
+    "cut guidance",
+    "layoffs",
+    "fraud",
+)
+_THEME_KEYWORDS: dict[str, tuple[str, ...]] = {
+    "earnings": ("earnings", "guidance", "eps", "revenue", "quarter"),
+    "rates": ("fed", "rate", "yield", "treasury", "inflation"),
+    "regulation": ("regulation", "antitrust", "doj", "sec", "fda", "ban"),
+    "deals": ("merger", "acquisition", "deal", "takeover", "partnership"),
+    "product": ("launch", "product", "iphone", "chip", "ai", "cloud"),
+    "geopolitics": ("war", "conflict", "tariff", "sanction", "iran", "china"),
+}
+
+
+def _macro_stress_scores(macro: dict[str, MacroPoint]) -> tuple[float, float]:
+    vix_change = ((macro.get("VIX") or MacroPoint()).chg_pct_1d or 0.0)
+    rates_change = ((macro.get("US10Y") or MacroPoint()).chg_bp_1d or 0.0)
+    dollar_change = ((macro.get("DXY") or MacroPoint()).chg_pct_1d or 0.0)
+    spy_change = ((macro.get("SPY") or MacroPoint()).chg_pct_1d or 0.0)
+
+    vix_jump = max(0.0, vix_change)
+    rates_jump = max(0.0, rates_change)
+    dollar_jump = max(0.0, dollar_change)
+    spy_drop = max(0.0, -spy_change)
+
+    panic = _clamp01((vix_jump / 0.12) * 0.45 + (rates_jump / 12.0) * 0.2 + (dollar_jump / 0.012) * 0.15 + (spy_drop / 0.02) * 0.2)
+    relief = _clamp01((max(0.0, -vix_change) / 0.08) * 0.5 + (max(0.0, spy_change) / 0.015) * 0.3 + (max(0.0, -rates_change) / 10.0) * 0.2)
+    return panic, relief
+
+
+def _price_metrics(prices: list[float]) -> dict[str, float | int | None]:
+    if len(prices) < 3:
+        return {
+            "ret5": None,
+            "ret20": None,
+            "ret60": None,
+            "drawdown120": None,
+            "vol20": None,
+            "vol60": None,
+            "volRatio": None,
+            "rangeLoc": None,
+            "returnsCount": 0,
+        }
+    returns = _daily_returns(prices)
+    vol20 = _annualized_vol(returns[-20:]) if len(returns) >= 20 else None
+    vol60 = _annualized_vol(returns[-60:]) if len(returns) >= 60 else None
+
+    window = prices[-120:] if len(prices) >= 120 else prices
+    min_px = min(window)
+    max_px = max(window)
+    loc = None
+    if max_px > min_px:
+        loc = (window[-1] - min_px) / (max_px - min_px)
+
+    return {
+        "ret5": _window_return(prices, 5),
+        "ret20": _window_return(prices, 20),
+        "ret60": _window_return(prices, 60),
+        "drawdown120": _max_drawdown(window),
+        "vol20": vol20,
+        "vol60": vol60,
+        "volRatio": (vol20 / vol60) if vol20 and vol60 and vol60 > 0 else None,
+        "rangeLoc": loc,
+        "returnsCount": len(returns),
+    }
+
+
+def _ticker_news_stats(items: list[Headline]) -> dict[str, Any]:
+    if not items:
+        return {"riskUpShare": 0.0, "riskDownShare": 0.0, "buzz": 0.0, "eventRisk": 0.0, "themes": []}
+
+    risk_up = 0.0
+    risk_down = 0.0
+    high_impact = 0.0
+    sentiment_sum = 0.0
+    theme_counts: dict[str, int] = {}
+    weight_sum = 0.0
+    for item in items:
+        impact, direction, _ = _classify_headline(item.title, sentiment_hint=item.sentiment_hint)
+        recency_weight = _recency_weight(item.published_at)
+        w = recency_weight * (1.35 if impact == "high" else 1.0)
+        weight_sum += w
+        if direction == "risk-up":
+            risk_up += w
+        elif direction == "risk-down":
+            risk_down += w
+        if impact == "high":
+            high_impact += w
+        sentiment_sum += _headline_sentiment(item.title, item.sentiment_hint) * w
+        for theme in _headline_themes(item.title):
+            theme_counts[theme] = theme_counts.get(theme, 0) + 1
+
+    normalized = weight_sum or 1.0
+    risk_up_share = _clamp01(risk_up / normalized)
+    risk_down_share = _clamp01(risk_down / normalized)
+    buzz = _clamp01((len(items) / 6.0) * 0.55 + (high_impact / normalized) * 0.45)
+    event_risk = _clamp01((risk_up_share * 0.65) + ((high_impact / normalized) * 0.2) + (max(0.0, -sentiment_sum / normalized) * 0.15))
+    themes = sorted(theme_counts, key=theme_counts.get, reverse=True)
+    return {
+        "riskUpShare": risk_up_share,
+        "riskDownShare": risk_down_share,
+        "buzz": buzz,
+        "eventRisk": event_risk,
+        "themes": themes,
+    }
+
+
+def _headline_sentiment(title: str, sentiment_hint: str | None = None) -> float:
+    lower = title.lower()
+    score = 0.0
+    score += sum(1 for token in _SENTIMENT_POSITIVE if token in lower) * 0.3
+    score -= sum(1 for token in _SENTIMENT_NEGATIVE if token in lower) * 0.35
+    if sentiment_hint:
+        hint = sentiment_hint.lower()
+        if "positive" in hint or "bull" in hint:
+            score += 0.35
+        elif "negative" in hint or "bear" in hint:
+            score -= 0.35
+    return max(-1.0, min(1.0, score))
+
+
+def _headline_themes(title: str) -> list[str]:
+    lower = title.lower()
+    out: list[str] = []
+    for theme, keywords in _THEME_KEYWORDS.items():
+        if any(token in lower for token in keywords):
+            out.append(theme)
+    return out
+
+
+def _recency_weight(published_at: str | None) -> float:
+    dt = _parse_datetime(published_at)
+    if dt is None:
+        return 0.7
+    age_hours = max(0.0, (datetime.now(tz=UTC) - dt).total_seconds() / 3600.0)
+    if age_hours <= 12:
+        return 1.0
+    if age_hours <= 48:
+        return 0.82
+    if age_hours <= 120:
+        return 0.64
+    return 0.45
+
+
+def _parse_datetime(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    text = value.strip()
+    if not text:
+        return None
+    try:
+        dt = datetime.fromisoformat(text.replace("Z", "+00:00"))
+        return dt if dt.tzinfo else dt.replace(tzinfo=UTC)
+    except ValueError:
+        pass
+    compact = _alpha_timestamp_to_iso(text)
+    if compact:
+        return compact
+    try:
+        dt = parsedate_to_datetime(text)
+        return dt if dt.tzinfo else dt.replace(tzinfo=UTC)
+    except Exception:
+        return None
+
+
+def _alpha_timestamp_to_iso(text: str) -> datetime | None:
+    if not re.fullmatch(r"\d{8}T\d{6}", text):
+        return None
+    try:
+        return datetime.strptime(text, "%Y%m%dT%H%M%S").replace(tzinfo=UTC)
+    except ValueError:
+        return None
+
+
+def _window_return(prices: list[float], days: int) -> float | None:
+    if len(prices) <= days:
+        return None
+    start = prices[-(days + 1)]
+    end = prices[-1]
+    if start <= 0:
+        return None
+    return (end / start) - 1
+
+
+def _weighted_signal(rows: list[dict[str, Any]], key: str) -> float:
+    total_weight = 0.0
+    value_weighted = 0.0
+    for row in rows:
+        weight = row.get("weight")
+        value = row.get(key)
+        if not isinstance(weight, (int, float)) or not isinstance(value, (int, float)):
+            continue
+        total_weight += float(weight)
+        value_weighted += float(weight) * float(value)
+    if total_weight <= 0:
+        return 0.0
+    return _clamp01(value_weighted / total_weight)
+
+
+def _signal_confidence(history_points: int, headline_count: int, relative_20: float | None) -> float:
+    base = 0.25
+    base += min(0.45, history_points / 180.0)
+    base += min(0.2, headline_count / 12.0)
+    if relative_20 is not None:
+        base += 0.1
+    return _clamp01(base)
+
+
+def _action_bias(opportunity: float, distribution: float, macro_panic: float, event_risk: float) -> str:
+    if opportunity >= 0.68 and macro_panic <= 0.82 and event_risk <= 0.8:
+        return "accumulate-on-weakness"
+    if distribution >= 0.68 and macro_panic <= 0.88:
+        return "trim-into-strength"
+    if macro_panic >= 0.72 or event_risk >= 0.72:
+        return "de-risk-hedge"
+    return "watch-hold"
+
+
+def _action_rationale(
+    action_bias: str,
+    ret5: float,
+    ret20: float | None,
+    drawdown: float,
+    location: float | None,
+    risk_up_share: float,
+    risk_down_share: float,
+    relative_20: float | None,
+) -> str:
+    rel = f"{relative_20:+.1%}" if relative_20 is not None else "n/a"
+    loc = f"{location:.0%}" if location is not None else "n/a"
+    ret20_txt = f"{ret20:+.1%}" if ret20 is not None else "n/a"
+    if action_bias == "accumulate-on-weakness":
+        return f"Deep pullback setup: 5d {ret5:+.1%}, 20d {ret20_txt}, drawdown {drawdown:.1%}, range location {loc}, vs SPY {rel}."
+    if action_bias == "trim-into-strength":
+        return f"Crowded upside setup: 5d {ret5:+.1%}, 20d {ret20_txt}, range location {loc}, positive headline pressure {risk_down_share:.0%}."
+    if action_bias == "de-risk-hedge":
+        return f"Risk pressure setup: drawdown {drawdown:.1%}, risk-up headline share {risk_up_share:.0%}, relative performance {rel}."
+    return f"Mixed setup: 5d {ret5:+.1%}, 20d {ret20_txt}, range location {loc}, risk-up headlines {risk_up_share:.0%}."
+
+
+def _regime_label(panic: float, crowding: float) -> str:
+    if panic >= 0.68:
+        return "stress"
+    if crowding >= 0.68 and panic < 0.5:
+        return "overheated"
+    if panic <= 0.35 and crowding <= 0.45:
+        return "calm"
+    return "mixed"
+
+
+def _clamp01(value: float) -> float:
+    return max(0.0, min(1.0, value))
 
 
 def _build_pulse(warnings: list[dict[str, str]], scenarios: list[dict[str, Any]]) -> dict[str, Any]:

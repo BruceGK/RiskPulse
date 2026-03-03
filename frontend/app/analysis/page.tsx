@@ -113,6 +113,10 @@ export default function AnalysisPage() {
   const watchouts = asRecordArray(signals?.watchouts);
   const radar = asRecordArray(signals?.radar);
   const scenarios = asRecordArray(signals?.scenarios);
+  const regime = asRecord(signals?.regime);
+  const tickerIntel = asRecordArray(signals?.tickerIntel);
+  const opportunities = asRecordArray(signals?.opportunities);
+  const exitSignals = asRecordArray(signals?.exitSignals);
 
   useEffect(() => {
     if (!scenarios.length) {
@@ -225,6 +229,69 @@ export default function AnalysisPage() {
               );
             })}
           </div>
+        </section>
+      )}
+
+      {analysis && (opportunities.length > 0 || exitSignals.length > 0 || regime) && (
+        <section className="grid two" style={{ marginBottom: 14 }}>
+          <article className="panel signal-panel">
+            <h3>Opportunity Scanner</h3>
+            {opportunities.length === 0 ? (
+              <div className="status">No high-conviction dislocation setup in this run.</div>
+            ) : (
+              <div className="signal-list">
+                {opportunities.map((row, idx) => {
+                  const ticker = typeof row.ticker === "string" ? row.ticker : "-";
+                  const score = asNumber(row.score);
+                  const confidence = asNumber(row.confidence);
+                  const reason = typeof row.reason === "string" ? row.reason : "";
+                  return (
+                    <div className="signal-item opportunity" key={`${ticker}-${idx}`}>
+                      <div className="signal-head">
+                        <strong>{ticker}</strong>
+                        <span className="severity low">score {score?.toFixed(2) || "-"}</span>
+                      </div>
+                      <div className="signal-meta">confidence {pct(confidence)}</div>
+                      {reason && <div className="signal-text">{reason}</div>}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </article>
+
+          <article className="panel signal-panel">
+            <h3>Distribution Scanner</h3>
+            {exitSignals.length === 0 ? (
+              <div className="status">No crowding-driven trim signal in this run.</div>
+            ) : (
+              <div className="signal-list">
+                {exitSignals.map((row, idx) => {
+                  const ticker = typeof row.ticker === "string" ? row.ticker : "-";
+                  const score = asNumber(row.score);
+                  const confidence = asNumber(row.confidence);
+                  const reason = typeof row.reason === "string" ? row.reason : "";
+                  return (
+                    <div className="signal-item exit" key={`${ticker}-${idx}`}>
+                      <div className="signal-head">
+                        <strong>{ticker}</strong>
+                        <span className="severity high">score {score?.toFixed(2) || "-"}</span>
+                      </div>
+                      <div className="signal-meta">confidence {pct(confidence)}</div>
+                      {reason && <div className="signal-text">{reason}</div>}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+            {regime && (
+              <div className="hero-meta" style={{ marginTop: 12 }}>
+                <span className="chip">Regime: {typeof regime.state === "string" ? regime.state : "-"}</span>
+                <span className="chip">panic {pct(asNumber(regime.panicScore))}</span>
+                <span className="chip">crowding {pct(asNumber(regime.crowdingScore))}</span>
+              </div>
+            )}
+          </article>
         </section>
       )}
 
@@ -380,6 +447,51 @@ export default function AnalysisPage() {
                 </div>
               )}
             </article>
+          </section>
+
+          <section className="panel" style={{ marginTop: 14 }}>
+            <h3>Holdings Intelligence</h3>
+            {tickerIntel.length === 0 ? (
+              <div className="status">Ticker intelligence was unavailable in this run.</div>
+            ) : (
+              <div className="table-wrap" style={{ marginTop: 8 }}>
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Ticker</th>
+                      <th>Action</th>
+                      <th>Opportunity</th>
+                      <th>Distribution</th>
+                      <th>Panic</th>
+                      <th>Crowding</th>
+                      <th>Themes</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {tickerIntel.map((row, idx) => {
+                      const ticker = typeof row.ticker === "string" ? row.ticker : `T${idx + 1}`;
+                      const action = typeof row.actionBias === "string" ? row.actionBias : "-";
+                      const opportunity = asNumber(row.opportunityIndex);
+                      const distribution = asNumber(row.distributionIndex);
+                      const panic = asNumber(row.panicScore);
+                      const crowding = asNumber(row.crowdingScore);
+                      const themes = asStringArray(row.themes).slice(0, 2).join(", ") || "-";
+                      return (
+                        <tr key={`${ticker}-${idx}`}>
+                          <td className="mono">{ticker}</td>
+                          <td>{action}</td>
+                          <td>{pct(opportunity)}</td>
+                          <td>{pct(distribution)}</td>
+                          <td>{pct(panic)}</td>
+                          <td>{pct(crowding)}</td>
+                          <td>{themes}</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
           </section>
 
           <section className="panel" style={{ marginTop: 14 }}>
