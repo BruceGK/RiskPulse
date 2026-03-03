@@ -211,6 +211,41 @@ a {
   margin-bottom: 14px;
 }
 
+.movers-panel {
+  margin-bottom: 14px;
+}
+
+.mover-list {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 9px;
+  margin-top: 8px;
+}
+
+.mover {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: #fff;
+  padding: 10px;
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  gap: 8px;
+  align-items: center;
+}
+
+.mover.up {
+  border-left: 4px solid #1f8d56;
+}
+
+.mover.down {
+  border-left: 4px solid #b62436;
+}
+
+.mover-value {
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
 .warning-list {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -304,6 +339,28 @@ a {
 
 .scenario-body {
   margin-top: 10px;
+}
+
+.slider-row {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  gap: 10px;
+  align-items: center;
+  margin-bottom: 10px;
+}
+
+.slider-row label {
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+
+.slider-row input[type="range"] {
+  width: 100%;
+}
+
+.slider-row span {
+  font-size: 0.82rem;
+  color: #2b4c74;
 }
 
 .scenario-metrics {
@@ -663,6 +720,10 @@ tbody tr:hover {
     grid-template-columns: 1fr 1fr;
   }
 
+  .mover-list {
+    grid-template-columns: 1fr 1fr;
+  }
+
   .form-grid {
     grid-template-columns: 1fr 1fr;
   }
@@ -677,6 +738,7 @@ tbody tr:hover {
   .grid.cards,
   .form-grid,
   .warning-list,
+  .mover-list,
   .scenario-metrics {
     grid-template-columns: 1fr;
   }

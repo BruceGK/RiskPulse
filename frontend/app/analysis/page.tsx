@@ -51,6 +51,7 @@ export default function AnalysisPage() {
   const [error, setError] = useState("");
   const [refreshTick, setRefreshTick] = useState(0);
   const [activeScenario, setActiveScenario] = useState("");
+  const [scenarioScale, setScenarioScale] = useState(1);
 
   useEffect(() => {
     const raw = localStorage.getItem(STORAGE_KEY);
@@ -128,6 +129,15 @@ export default function AnalysisPage() {
 
   const selectedScenario = scenarios.find((row) => row.id === activeScenario) || scenarios[0] || null;
   const scenarioExposed = selectedScenario ? asRecordArray(selectedScenario.exposed) : [];
+  const movers = useMemo(
+    () =>
+      [...(analysis?.positions || [])]
+        .filter((p) => p.chg_pct_1d !== null)
+        .sort((a, b) => Math.abs(b.chg_pct_1d || 0) - Math.abs(a.chg_pct_1d || 0))
+        .slice(0, 6),
+    [analysis]
+  );
+  const scaledScenarioImpact = selectedScenario ? (asNumber(selectedScenario.portfolioImpactPct) || 0) * scenarioScale : null;
 
   return (
     <main className="container">
@@ -174,6 +184,25 @@ export default function AnalysisPage() {
               ))}
             </div>
           )}
+        </section>
+      )}
+
+      {analysis && movers.length > 0 && (
+        <section className="panel movers-panel">
+          <h3>Live Movers</h3>
+          <div className="mover-list">
+            {movers.map((row) => {
+              const chg = row.chg_pct_1d || 0;
+              const dirClass = chg >= 0 ? "up" : "down";
+              return (
+                <div className={`mover ${dirClass}`} key={row.ticker}>
+                  <span className="mono">{row.ticker}</span>
+                  <strong>{pct(chg)}</strong>
+                  <span className="mover-value">{money(row.value)}</span>
+                </div>
+              );
+            })}
+          </div>
         </section>
       )}
 
@@ -279,6 +308,19 @@ export default function AnalysisPage() {
               </div>
               {selectedScenario ? (
                 <div className="scenario-body">
+                  <div className="slider-row">
+                    <label htmlFor="scenario-scale">Shock Intensity</label>
+                    <input
+                      id="scenario-scale"
+                      type="range"
+                      min={0.5}
+                      max={2}
+                      step={0.1}
+                      value={scenarioScale}
+                      onChange={(e) => setScenarioScale(Number(e.target.value))}
+                    />
+                    <span>{scenarioScale.toFixed(1)}x</span>
+                  </div>
                   <div className="scenario-metrics">
                     <div>
                       <div className="kpi-label">Shock</div>
@@ -288,10 +330,10 @@ export default function AnalysisPage() {
                       <div className="kpi-label">Estimated Portfolio Impact</div>
                       <div
                         className={`scenario-impact ${
-                          (asNumber(selectedScenario.portfolioImpactPct) || 0) < 0 ? "neg" : "pos"
+                          (scaledScenarioImpact || 0) < 0 ? "neg" : "pos"
                         }`}
                       >
-                        {pct(asNumber(selectedScenario.portfolioImpactPct))}
+                        {pct(scaledScenarioImpact)}
                       </div>
                     </div>
                   </div>
