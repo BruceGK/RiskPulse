@@ -69,6 +69,14 @@ class OpenBBProvider:
         short_interest = _float_or_none(
             _first_value(row_shorts, ("short_interest_percent", "short_percent_float", "short_interest_pct"))
         )
+        eps_ttm = _float_or_none(_first_value(row_metrics, ("eps", "eps_ttm", "earnings_per_share")))
+        book_value_per_share = _float_or_none(_first_value(row_metrics, ("book_value_per_share", "bvps")))
+        revenue_growth = _float_or_none(
+            _first_value(row_ratios, ("revenue_growth", "sales_growth", "revenue_growth_yoy"))
+        )
+        earnings_growth = _float_or_none(
+            _first_value(row_ratios, ("earnings_growth", "eps_growth", "net_income_growth"))
+        )
 
         option_skew = _options_skew(option_rows)
         put_call_ratio = _options_put_call(option_rows)
@@ -92,6 +100,12 @@ class OpenBBProvider:
             "analyst": {
                 "targetPrice": target_price,
                 "recommendationMean": recommendation,
+            },
+            "fundamental": {
+                "epsTtm": eps_ttm,
+                "bookValuePerShare": book_value_per_share,
+                "revenueGrowth": revenue_growth,
+                "earningsGrowth": earnings_growth,
             },
             "options": {
                 "putCallRatio": put_call_ratio,

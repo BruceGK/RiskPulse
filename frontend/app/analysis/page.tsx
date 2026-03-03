@@ -728,6 +728,9 @@ export default function AnalysisPage() {
                             <tr>
                               <th>Ticker</th>
                               <th>Action</th>
+                              <th>Value View</th>
+                              <th>Fair Value</th>
+                              <th>MoS</th>
                               <th>Opportunity</th>
                               <th>Distribution</th>
                               <th>Panic</th>
@@ -743,11 +746,18 @@ export default function AnalysisPage() {
                               const distribution = asNumber(row.distributionIndex);
                               const panic = asNumber(row.panicScore);
                               const crowding = asNumber(row.crowdingScore);
+                              const valuation = asRecord(row.valuation);
+                              const fairValue = asNumber(valuation?.fairValue);
+                              const marginSafety = asNumber(valuation?.marginSafety);
+                              const valueView = typeof valuation?.verdict === "string" ? valuation.verdict : "-";
                               const themes = asStringArray(row.themes).slice(0, 2).join(", ") || "-";
                               return (
                                 <tr key={`${ticker}-${idx}`}>
                                   <td className="mono">{ticker}</td>
                                   <td>{action}</td>
+                                  <td>{valueView}</td>
+                                  <td>{money(fairValue)}</td>
+                                  <td className={marginSafety !== null && marginSafety < 0 ? "neg" : "pos"}>{pct(marginSafety)}</td>
                                   <td>{pct(opportunity)}</td>
                                   <td>{pct(distribution)}</td>
                                   <td>{pct(panic)}</td>
