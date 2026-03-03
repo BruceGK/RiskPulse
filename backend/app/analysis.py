@@ -73,8 +73,13 @@ class AnalysisService:
 
         macro = self._build_macro_payload(macro_raw, quotes)
         news = await self._build_news_payload(position_rows)
-        behavioral = await self._build_behavioral_intel(position_rows, news, macro)
+        try:
+            behavioral = await self._build_behavioral_intel(position_rows, news, macro)
+        except Exception:
+            behavioral = {"regime": {"state": "insufficient-data"}, "tickerIntel": [], "opportunities": [], "exitSignals": []}
         notes = self._build_notes(top5_weight, risk, missing_quotes, news)
+        if not behavioral.get("tickerIntel"):
+            notes.append("Behavioral signal model unavailable for this run; using baseline analytics only.")
         if missing_quotes and self.settings.alpha_vantage_api_key and not (
             self.settings.polygon_api_key or self.settings.fmp_api_key
         ):

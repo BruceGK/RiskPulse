@@ -1,3 +1,5 @@
+import logging
+
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -7,6 +9,7 @@ from app.models import AnalysisRequest, AnalysisResponse
 
 settings = get_settings()
 app = FastAPI(title=settings.app_name)
+logger = logging.getLogger("riskpulse.api")
 
 app.add_middleware(
     CORSMiddleware,
@@ -28,4 +31,5 @@ async def analyze(payload: AnalysisRequest) -> AnalysisResponse:
         service = AnalysisService(settings)
         return await service.analyze(payload)
     except Exception as exc:
+        logger.exception("Analysis request failed")
         raise HTTPException(status_code=500, detail="Analysis failed") from exc
