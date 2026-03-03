@@ -23,6 +23,13 @@ function money(value: number | null | undefined): string {
   return `$${value.toLocaleString(undefined, { maximumFractionDigits: 2 })}`;
 }
 
+function asRecord(value: unknown): Record<string, unknown> | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+  return value as Record<string, unknown>;
+}
+
 export default function AnalysisPage() {
   const [positions, setPositions] = useState<Position[]>([]);
   const [analysis, setAnalysis] = useState<AnalysisResponse | null>(null);
@@ -71,6 +78,8 @@ export default function AnalysisPage() {
   const dataQuality = (analysis?.meta?.dataQuality ||
     null) as null | { score?: number; label?: string; priceCoverage?: number; macroCoverage?: number; macroNewsCount?: number };
   const quoteSources = (analysis?.meta?.quoteSources || null) as null | Record<string, string>;
+  const providers = asRecord(analysis?.meta?.providers);
+  const providerEntries = providers ? Object.entries(providers) : [];
 
   return (
     <main className="container">
@@ -149,13 +158,12 @@ export default function AnalysisPage() {
                 <div className="note">Macro headlines: {String(dataQuality?.macroNewsCount ?? "-")}</div>
               </div>
               <div className="hero-meta" style={{ marginTop: 12 }}>
-                {analysis.meta?.providers &&
-                  Object.entries(analysis.meta.providers as Record<string, unknown>).map(([k, v]) => (
+                {providerEntries.map(([k, v]) => (
                     <span className="chip" key={k}>
-                      <span className="chip-dot" style={{ background: v ? "var(--good)" : "#9ca9b6" }} />
+                      <span className="chip-dot" style={{ background: Boolean(v) ? "var(--good)" : "#9ca9b6" }} />
                       {k.replace("_enabled", "")}
                     </span>
-                  ))}
+                ))}
               </div>
             </article>
           </section>
