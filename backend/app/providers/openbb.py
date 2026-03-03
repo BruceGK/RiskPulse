@@ -164,6 +164,8 @@ class OpenBBProvider:
         put_call_ratio = _options_put_call(option_rows)
         iv_level = _options_iv_level(option_rows)
 
+        valuation_inputs = [pe, pb, ev_ebitda, fcf_yield, target_price, roe, eps_ttm, book_value_per_share, revenue_growth, earnings_growth]
+        coverage_count = sum(1 for item in valuation_inputs if isinstance(item, float))
         result = {
             "provider": "openbb",
             "sector": _first_value(row_profile, ("sector", "gics_sector")) or row_yahoo.get("sector") or None,
@@ -202,8 +204,10 @@ class OpenBBProvider:
                 "yahooOverview": bool(row_yahoo),
                 "yahooQuote": bool(row_yahoo_quote),
             },
+            "coverage": {"valuationInputs": coverage_count},
         }
-        _INTEL_CACHE.set(cache_key, result, ttl_seconds=1800)
+        ttl = 1800 if coverage_count >= 2 else 120
+        _INTEL_CACHE.set(cache_key, result, ttl_seconds=ttl)
         return result
 
     async def get_ticker_news(self, ticker: str, limit: int) -> list[dict[str, Any]]:

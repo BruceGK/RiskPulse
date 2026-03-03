@@ -1612,7 +1612,7 @@ def _valuation_intel(openbb: dict[str, Any], current_price: float | None) -> dic
 
     if target_price and target_price > 0:
         rel = target_price / price
-        if 0.45 <= rel <= 2.8:
+        if 0.25 <= rel <= 4.0:
             w = 0.38
             methods.append(
                 {
@@ -1635,7 +1635,7 @@ def _valuation_intel(openbb: dict[str, Any], current_price: float | None) -> dic
             quality_adj -= max(-0.008, min(0.012, (float(d2e) - 1.0) * 0.02))
         fair_yield = max(0.035, min(0.085, 0.055 - quality_adj))
         fcf_value = price * (float(fcf_yield) / fair_yield)
-        if 0.4 <= (fcf_value / price) <= 2.8:
+        if 0.15 <= (fcf_value / price) <= 4.0:
             w = 0.34
             methods.append(
                 {
@@ -1657,7 +1657,7 @@ def _valuation_intel(openbb: dict[str, Any], current_price: float | None) -> dic
             fair_pe += max(-2.0, min(4.0, (float(roe) - 0.12) * 22.0))
         fair_pe = max(11.0, min(42.0, fair_pe))
         pe_value = price * (fair_pe / float(pe))
-        if 0.45 <= (pe_value / price) <= 2.5:
+        if 0.2 <= (pe_value / price) <= 3.5:
             w = 0.18
             methods.append(
                 {
@@ -1674,7 +1674,7 @@ def _valuation_intel(openbb: dict[str, Any], current_price: float | None) -> dic
     if pb and pb > 0 and isinstance(roe, (int, float)):
         fair_pb = max(1.2, min(12.0, float(roe) * 13.0))
         pb_value = price * (fair_pb / float(pb))
-        if 0.45 <= (pb_value / price) <= 2.5:
+        if 0.2 <= (pb_value / price) <= 3.5:
             w = 0.1
             methods.append(
                 {
@@ -1689,6 +1689,39 @@ def _valuation_intel(openbb: dict[str, Any], current_price: float | None) -> dic
             method_weights += w
 
     if method_weights <= 0:
+        heuristic_values: list[float] = []
+        if pe and pe > 0:
+            fair_pe = 24.0
+            if isinstance(eps_growth, (int, float)):
+                fair_pe += max(-6.0, min(10.0, float(eps_growth) * 28.0))
+            fair_pe = max(10.0, min(40.0, fair_pe))
+            heuristic_values.append(price * (fair_pe / float(pe)))
+        if pb and pb > 0 and isinstance(roe, (int, float)):
+            fair_pb = max(1.0, min(10.0, float(roe) * 11.0))
+            heuristic_values.append(price * (fair_pb / float(pb)))
+        if heuristic_values:
+            fair_value = sum(heuristic_values) / len(heuristic_values)
+            margin_safety = (fair_value / price) - 1.0
+            confidence = 0.22
+            if margin_safety >= 0.15:
+                verdict = "undervalued"
+            elif margin_safety >= 0.08:
+                verdict = "slightly-undervalued"
+            elif margin_safety <= -0.15:
+                verdict = "overvalued"
+            elif margin_safety <= -0.08:
+                verdict = "slightly-overvalued"
+            else:
+                verdict = "fair"
+            return {
+                "fairValue": round(fair_value, 2),
+                "marginSafety": round(margin_safety, 4),
+                "verdict": verdict,
+                "confidence": round(confidence, 3),
+                "undervaluationScore": round(_clamp01(((margin_safety + 0.02) / 0.35) * confidence + (1 - confidence) * 0.5), 3),
+                "overvaluationScore": round(_clamp01(((-margin_safety + 0.02) / 0.35) * confidence + (1 - confidence) * 0.5), 3),
+                "methods": [{"name": "multiples_heuristic", "value": round(fair_value, 2), "weight": 0.12, "impliedUpside": round(margin_safety, 4)}],
+            }
         return {
             "fairValue": None,
             "marginSafety": 0.0,
