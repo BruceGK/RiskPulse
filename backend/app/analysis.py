@@ -25,8 +25,10 @@ class AnalysisService:
         self.ai = AiProvider(settings)
 
     async def analyze(self, req: AnalysisRequest) -> AnalysisResponse:
-        tickers = sorted({p.ticker for p in req.positions})
-        quote_symbols = sorted(set(tickers + ["SPY", "GLD"]))
+        # Preserve user ticker priority so free-tier rate limits don't starve portfolio quotes.
+        tickers = list(dict.fromkeys(p.ticker for p in req.positions))
+        macro_overlays = [symbol for symbol in ("SPY", "GLD") if symbol not in tickers]
+        quote_symbols = tickers + macro_overlays
         quotes_task = asyncio.create_task(self.market.get_quotes(quote_symbols))
         macro_task = asyncio.create_task(self.macro.get_macro_snapshot())
         quotes, macro_raw = await asyncio.gather(quotes_task, macro_task)
