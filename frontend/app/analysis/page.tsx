@@ -7,9 +7,26 @@ import { analyzePortfolio } from "@/lib/api";
 import type { AnalysisResponse, Position } from "@/lib/types";
 
 const STORAGE_KEY = "riskpulse_positions";
+const UI_PREFS_KEY = "riskpulse_ui_v1";
+const UI_PREFS_MAX_AGE_MS = 1000 * 60 * 60 * 24 * 30;
 
 type ViewTab = "overview" | "signals" | "holdings" | "news";
 type RailTab = "macro" | "ticker" | "sec";
+type UiPrefs = {
+  activeTab: ViewTab;
+  railTab: RailTab;
+  activeScenario: string;
+  scenarioScale: number;
+  savedAt: number;
+};
+
+function isViewTab(value: string | null): value is ViewTab {
+  return value === "overview" || value === "signals" || value === "holdings" || value === "news";
+}
+
+function isRailTab(value: string | null): value is RailTab {
+  return value === "macro" || value === "ticker" || value === "sec";
+}
 
 function pct(value: number | null | undefined): string {
   if (value === null || value === undefined) return "-";
@@ -56,6 +73,68 @@ export default function AnalysisPage() {
   const [scenarioScale, setScenarioScale] = useState(1);
   const [activeTab, setActiveTab] = useState<ViewTab>("overview");
   const [railTab, setRailTab] = useState<RailTab>("macro");
+  const [prefsHydrated, setPrefsHydrated] = useState(false);
+
+  useEffect(() => {
+    let hasUrlTab = false;
+    let hasUrlRail = false;
+    let hasUrlScenario = false;
+    let hasUrlShock = false;
+    try {
+      const params = new URLSearchParams(window.location.search);
+      const urlTab = params.get("tab");
+      const urlRail = params.get("rail");
+      const urlScenario = params.get("scenario");
+      const urlShock = params.get("shock");
+      if (isViewTab(urlTab)) {
+        setActiveTab(urlTab);
+        hasUrlTab = true;
+      }
+      if (isRailTab(urlRail)) {
+        setRailTab(urlRail);
+        hasUrlRail = true;
+      }
+      if (typeof urlScenario === "string" && urlScenario.trim().length > 0) {
+        setActiveScenario(urlScenario.trim());
+        hasUrlScenario = true;
+      }
+      if (typeof urlShock === "string" && urlShock.trim().length > 0) {
+        const parsedShock = Number(urlShock);
+        if (Number.isFinite(parsedShock)) {
+          setScenarioScale(Math.min(2, Math.max(0.5, parsedShock)));
+          hasUrlShock = true;
+        }
+      }
+    } catch {
+      // Ignore malformed URL params and continue with persisted preferences.
+    }
+
+    try {
+      const raw = localStorage.getItem(UI_PREFS_KEY);
+      if (!raw) {
+        setPrefsHydrated(true);
+        return;
+      }
+      const prefs = JSON.parse(raw) as Partial<UiPrefs>;
+      if (typeof prefs.savedAt === "number" && Date.now() - prefs.savedAt > UI_PREFS_MAX_AGE_MS) {
+        localStorage.removeItem(UI_PREFS_KEY);
+        setPrefsHydrated(true);
+        return;
+      }
+      const savedTab = typeof prefs.activeTab === "string" ? prefs.activeTab : null;
+      const savedRail = typeof prefs.railTab === "string" ? prefs.railTab : null;
+      if (!hasUrlTab && isViewTab(savedTab)) setActiveTab(savedTab);
+      if (!hasUrlRail && isRailTab(savedRail)) setRailTab(savedRail);
+      if (!hasUrlScenario && typeof prefs.activeScenario === "string") setActiveScenario(prefs.activeScenario);
+      if (!hasUrlShock && typeof prefs.scenarioScale === "number" && Number.isFinite(prefs.scenarioScale)) {
+        setScenarioScale(Math.min(2, Math.max(0.5, prefs.scenarioScale)));
+      }
+    } catch {
+      // Ignore malformed local storage payload.
+    } finally {
+      setPrefsHydrated(true);
+    }
+  }, []);
 
   useEffect(() => {
     const raw = localStorage.getItem(STORAGE_KEY);
@@ -197,6 +276,40 @@ export default function AnalysisPage() {
       setActiveScenario(ids[0]);
     }
   }, [scenarios, activeScenario]);
+
+  useEffect(() => {
+    if (!prefsHydrated) return;
+    const payload: UiPrefs = {
+      activeTab,
+      railTab,
+      activeScenario,
+      scenarioScale,
+      savedAt: Date.now(),
+    };
+    localStorage.setItem(UI_PREFS_KEY, JSON.stringify(payload));
+  }, [activeTab, railTab, activeScenario, scenarioScale, prefsHydrated]);
+
+  useEffect(() => {
+    if (!prefsHydrated) return;
+    const params = new URLSearchParams(window.location.search);
+    params.set("tab", activeTab);
+    params.set("rail", railTab);
+    if (activeScenario) {
+      params.set("scenario", activeScenario);
+    } else {
+      params.delete("scenario");
+    }
+    if (Math.abs(scenarioScale - 1) > 0.001) {
+      params.set("shock", scenarioScale.toFixed(1));
+    } else {
+      params.delete("shock");
+    }
+    const nextQuery = params.toString();
+    const currentQuery = window.location.search.startsWith("?") ? window.location.search.slice(1) : "";
+    if (nextQuery === currentQuery) return;
+    const nextUrl = `${window.location.pathname}${nextQuery ? `?${nextQuery}` : ""}${window.location.hash}`;
+    window.history.replaceState({}, "", nextUrl);
+  }, [activeTab, railTab, activeScenario, scenarioScale, prefsHydrated]);
 
   const selectedScenario = scenarios.find((row) => row.id === activeScenario) || scenarios[0] || null;
   const scenarioExposed = selectedScenario ? asRecordArray(selectedScenario.exposed) : [];
