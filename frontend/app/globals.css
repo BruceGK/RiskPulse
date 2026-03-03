@@ -187,6 +187,68 @@ a {
   color: #f1f7ff;
 }
 
+.section-switcher {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.switch-chip {
+  border: 1px solid #ccdae9;
+  background: #f3f8ff;
+  color: #2a4f7d;
+  border-radius: 999px;
+  padding: 8px 12px;
+  font-size: 0.82rem;
+  cursor: pointer;
+}
+
+.switch-chip.active {
+  background: #dbe9ff;
+  border-color: #98b7ea;
+  color: #113f7d;
+}
+
+.analysis-shell {
+  display: grid;
+  gap: 14px;
+  grid-template-columns: minmax(0, 1fr) 330px;
+  align-items: start;
+}
+
+.analysis-main {
+  min-width: 0;
+}
+
+.news-rail {
+  position: sticky;
+  top: 14px;
+  max-height: calc(100vh - 28px);
+  overflow-y: auto;
+}
+
+.rail-tabs {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.rail-tab {
+  border: 1px solid #cedbf1;
+  background: #ecf2fb;
+  color: #2b4a72;
+  border-radius: 999px;
+  padding: 6px 10px;
+  font-size: 0.76rem;
+  cursor: pointer;
+}
+
+.rail-tab.active {
+  border-color: #9cb9e5;
+  background: #dce9fc;
+  color: #143f77;
+}
+
 .stance {
   font-size: 0.7rem;
   text-transform: uppercase;
@@ -773,6 +835,15 @@ tbody tr:hover {
   .grid.two,
   .grid.cards {
     grid-template-columns: 1fr 1fr;
+  }
+
+  .analysis-shell {
+    grid-template-columns: 1fr;
+  }
+
+  .news-rail {
+    position: static;
+    max-height: none;
   }
 
   .warning-list {
