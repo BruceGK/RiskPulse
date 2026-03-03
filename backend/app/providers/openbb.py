@@ -16,66 +16,106 @@ class OpenBBProvider:
         return bool(self.settings.openbb_base_url)
 
     async def get_ticker_intel(self, ticker: str) -> dict[str, Any]:
-        if not self.enabled:
+        if not self.enabled and not self.settings.alpha_vantage_api_key:
             return {}
         symbol = ticker.upper().strip()
         if not symbol:
             return {}
 
-        profile_task = self._fetch(
-            "/api/v1/equity/profile",
-            {"symbol": symbol, "provider": self.settings.openbb_provider},
-        )
-        metrics_task = self._fetch(
-            "/api/v1/equity/fundamental/metrics",
-            {"symbol": symbol, "provider": self.settings.openbb_provider},
-        )
-        ratios_task = self._fetch(
-            "/api/v1/equity/fundamental/ratios",
-            {"symbol": symbol, "provider": self.settings.openbb_provider},
-        )
-        analyst_task = self._fetch(
-            "/api/v1/equity/estimates/consensus",
-            {"symbol": symbol, "provider": self.settings.openbb_provider},
-        )
-        options_task = self._fetch(
-            "/api/v1/derivatives/options/snapshots",
-            {"symbol": symbol, "provider": self.settings.openbb_provider},
-        )
-        shorts_task = self._fetch(
-            "/api/v1/equity/shorts/short_interest",
-            {"symbol": symbol, "provider": self.settings.openbb_provider},
-        )
+        if self.enabled:
+            profile_task = self._fetch(
+                "/api/v1/equity/profile",
+                {"symbol": symbol, "provider": self.settings.openbb_provider},
+            )
+            metrics_task = self._fetch(
+                "/api/v1/equity/fundamental/metrics",
+                {"symbol": symbol, "provider": self.settings.openbb_provider},
+            )
+            ratios_task = self._fetch(
+                "/api/v1/equity/fundamental/ratios",
+                {"symbol": symbol, "provider": self.settings.openbb_provider},
+            )
+            analyst_task = self._fetch(
+                "/api/v1/equity/estimates/consensus",
+                {"symbol": symbol, "provider": self.settings.openbb_provider},
+            )
+            options_task = self._fetch(
+                "/api/v1/derivatives/options/snapshots",
+                {"symbol": symbol, "provider": self.settings.openbb_provider},
+            )
+            shorts_task = self._fetch(
+                "/api/v1/equity/shorts/short_interest",
+                {"symbol": symbol, "provider": self.settings.openbb_provider},
+            )
+            profile, metrics, ratios, analyst, options, shorts = await _gather_safely(
+                profile_task, metrics_task, ratios_task, analyst_task, options_task, shorts_task
+            )
+        else:
+            profile, metrics, ratios, analyst, options, shorts = None, None, None, None, None, None
 
-        profile, metrics, ratios, analyst, options, shorts = await _gather_safely(
-            profile_task, metrics_task, ratios_task, analyst_task, options_task, shorts_task
-        )
+        alpha_overview = await self._fetch_alpha_vantage_overview(symbol) if self.settings.alpha_vantage_api_key else None
+
         row_profile = _pick_row(profile)
         row_metrics = _pick_row(metrics)
         row_ratios = _pick_row(ratios)
         row_analyst = _pick_row(analyst)
         row_shorts = _pick_row(shorts)
         option_rows = _rows(options)
+        row_alpha = alpha_overview if isinstance(alpha_overview, dict) else {}
 
-        pe = _float_or_none(_first_value(row_metrics, ("pe_ratio", "pe", "price_earnings_ratio")))
-        pb = _float_or_none(_first_value(row_metrics, ("pb_ratio", "price_to_book", "p_b")))
-        ev_ebitda = _float_or_none(_first_value(row_ratios, ("ev_to_ebitda", "enterprise_value_ebitda")))
-        fcf_yield = _float_or_none(_first_value(row_ratios, ("fcf_yield", "free_cash_flow_yield")))
-        roe = _float_or_none(_first_value(row_ratios, ("roe", "return_on_equity")))
-        gross_margin = _float_or_none(_first_value(row_ratios, ("gross_margin", "gross_margin_ratio")))
-        debt_to_equity = _float_or_none(_first_value(row_ratios, ("debt_to_equity", "de_ratio")))
-        target_price = _float_or_none(_first_value(row_analyst, ("target_price", "price_target")))
+        pe = _coalesce_float(
+            _first_value(row_metrics, ("pe_ratio", "pe", "price_earnings_ratio")),
+            row_alpha.get("PERatio"),
+        )
+        pb = _coalesce_float(
+            _first_value(row_metrics, ("pb_ratio", "price_to_book", "p_b")),
+            row_alpha.get("PriceToBookRatio"),
+        )
+        ev_ebitda = _coalesce_float(
+            _first_value(row_ratios, ("ev_to_ebitda", "enterprise_value_ebitda")),
+            row_alpha.get("EVToEBITDA"),
+        )
+        fcf_yield = _coalesce_float(_first_value(row_ratios, ("fcf_yield", "free_cash_flow_yield")))
+        market_cap = _float_or_none(row_alpha.get("MarketCapitalization"))
+        free_cash_flow_ttm = _coalesce_float(row_alpha.get("FreeCashFlowTTM"), row_alpha.get("OperatingCashflowTTM"))
+        if fcf_yield is None and isinstance(market_cap, float) and market_cap > 0 and isinstance(free_cash_flow_ttm, float):
+            fcf_yield = free_cash_flow_ttm / market_cap
+        roe = _coalesce_float(
+            _first_value(row_ratios, ("roe", "return_on_equity")),
+            row_alpha.get("ReturnOnEquityTTM"),
+        )
+        gross_margin = _coalesce_float(_first_value(row_ratios, ("gross_margin", "gross_margin_ratio")))
+        gross_profit_ttm = _float_or_none(row_alpha.get("GrossProfitTTM"))
+        revenue_ttm = _float_or_none(row_alpha.get("RevenueTTM"))
+        if gross_margin is None and isinstance(gross_profit_ttm, float) and isinstance(revenue_ttm, float) and revenue_ttm > 0:
+            gross_margin = gross_profit_ttm / revenue_ttm
+        debt_to_equity = _coalesce_float(
+            _first_value(row_ratios, ("debt_to_equity", "de_ratio")),
+            row_alpha.get("DebtToEquity"),
+        )
+        target_price = _coalesce_float(
+            _first_value(row_analyst, ("target_price", "price_target")),
+            row_alpha.get("AnalystTargetPrice"),
+        )
         recommendation = _float_or_none(_first_value(row_analyst, ("recommendation_mean", "rating")))
         short_interest = _float_or_none(
             _first_value(row_shorts, ("short_interest_percent", "short_percent_float", "short_interest_pct"))
         )
-        eps_ttm = _float_or_none(_first_value(row_metrics, ("eps", "eps_ttm", "earnings_per_share")))
-        book_value_per_share = _float_or_none(_first_value(row_metrics, ("book_value_per_share", "bvps")))
-        revenue_growth = _float_or_none(
-            _first_value(row_ratios, ("revenue_growth", "sales_growth", "revenue_growth_yoy"))
+        eps_ttm = _coalesce_float(
+            _first_value(row_metrics, ("eps", "eps_ttm", "earnings_per_share")),
+            row_alpha.get("DilutedEPSTTM"),
         )
-        earnings_growth = _float_or_none(
-            _first_value(row_ratios, ("earnings_growth", "eps_growth", "net_income_growth"))
+        book_value_per_share = _coalesce_float(
+            _first_value(row_metrics, ("book_value_per_share", "bvps")),
+            row_alpha.get("BookValue"),
+        )
+        revenue_growth = _coalesce_float(
+            _first_value(row_ratios, ("revenue_growth", "sales_growth", "revenue_growth_yoy")),
+            row_alpha.get("QuarterlyRevenueGrowthYOY"),
+        )
+        earnings_growth = _coalesce_float(
+            _first_value(row_ratios, ("earnings_growth", "eps_growth", "net_income_growth")),
+            row_alpha.get("QuarterlyEarningsGrowthYOY"),
         )
 
         option_skew = _options_skew(option_rows)
@@ -114,6 +154,9 @@ class OpenBBProvider:
             },
             "shorts": {
                 "shortInterestPct": short_interest,
+            },
+            "fallbacks": {
+                "alphaVantageOverview": bool(row_alpha),
             },
         }
 
@@ -179,6 +222,25 @@ class OpenBBProvider:
         except Exception:
             return None
 
+    async def _fetch_alpha_vantage_overview(self, symbol: str) -> dict[str, Any] | None:
+        if not self.settings.alpha_vantage_api_key:
+            return None
+        params = {"function": "OVERVIEW", "symbol": symbol, "apikey": self.settings.alpha_vantage_api_key}
+        try:
+            async with httpx.AsyncClient(timeout=self.settings.request_timeout_seconds) as client:
+                resp = await client.get("https://www.alphavantage.co/query", params=params)
+                resp.raise_for_status()
+                payload = resp.json()
+            if not isinstance(payload, dict):
+                return None
+            if payload.get("Note") or payload.get("Information") or payload.get("Error Message"):
+                return None
+            if not payload.get("Symbol"):
+                return None
+            return payload
+        except Exception:
+            return None
+
 
 async def _gather_safely(*coros):
     import asyncio
@@ -223,6 +285,14 @@ def _float_or_none(value: Any) -> float | None:
         return float(value)
     except (TypeError, ValueError):
         return None
+
+
+def _coalesce_float(*values: Any) -> float | None:
+    for value in values:
+        parsed = _float_or_none(value)
+        if parsed is not None:
+            return parsed
+    return None
 
 
 def _options_put_call(rows: list[dict[str, Any]]) -> float | None:
