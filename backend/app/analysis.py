@@ -671,6 +671,7 @@ class AnalysisService:
             macro=macro,
             risk=risk,
         )
+        macro_context = _build_macro_context(macro, news.get("macro", []), positions)
         theme_board = _build_theme_board(radar, behavioral)
         return {
             "pulse": pulse,
@@ -690,6 +691,7 @@ class AnalysisService:
             "alphaBook": behavioral.get("alphaBook", {}),
             "submodels": behavioral.get("submodels", {}),
             "technicalSummary": behavioral.get("technicalSummary", {}),
+            "macroContext": macro_context,
         }
 
     def _build_headline_radar(self, news: dict[str, list[Headline]], top_tickers: list[str]) -> list[dict[str, Any]]:
@@ -1018,6 +1020,7 @@ class AnalysisService:
             "alphaBook": base.get("alphaBook", {}),
             "submodels": base.get("submodels", {}),
             "technicalSummary": base.get("technicalSummary", {}),
+            "macroContext": base.get("macroContext", {}),
         }
 
         ai_pulse = ai.get("pulse")
@@ -1234,6 +1237,14 @@ _THEME_KEYWORDS: dict[str, tuple[str, ...]] = {
     "deals": ("merger", "acquisition", "deal", "takeover", "partnership"),
     "product": ("launch", "product", "iphone", "chip", "ai", "cloud"),
     "geopolitics": ("war", "conflict", "tariff", "sanction", "iran", "china"),
+}
+
+_MACRO_EVENT_KEYWORDS: dict[str, tuple[str, ...]] = {
+    "inflation": ("cpi", "pce", "inflation", "ppi", "prices"),
+    "labor": ("jobs", "payroll", "nfp", "unemployment", "adp", "claims", "labor"),
+    "growth": ("gdp", "pmi", "ism", "retail sales", "durable goods", "manufacturing", "services"),
+    "policy": ("fed", "fomc", "rate decision", "rate hike", "rate cut", "dot plot", "minutes"),
+    "energy": ("oil", "crude", "eia", "inventory", "gasoline", "brent", "wti"),
 }
 
 
@@ -1958,6 +1969,377 @@ def _as_float(value: Any) -> float | None:
 
 def _clamp01(value: float) -> float:
     return max(0.0, min(1.0, value))
+
+
+def _build_macro_context(
+    macro: dict[str, MacroPoint],
+    macro_news: list[Headline],
+    positions: list[PositionAnalysis],
+) -> dict[str, Any]:
+    drivers = _macro_driver_rows(macro)
+    event_readthrough = _macro_event_readthrough(macro_news)
+    implications = _macro_portfolio_implications(drivers, event_readthrough, positions)
+    summary, regime_bias = _macro_context_summary(drivers, event_readthrough, implications)
+    return {
+        "summary": summary,
+        "regimeBias": regime_bias,
+        "drivers": drivers[:6],
+        "eventReadthrough": event_readthrough[:4],
+        "portfolioImplications": implications[:4],
+    }
+
+
+def _macro_driver_rows(macro: dict[str, MacroPoint]) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+
+    def _add_row(driver: str, point: MacroPoint, signal: str, meaning: str, playbook: str, confidence: float) -> None:
+        move = "-"
+        if isinstance(point.chg_bp_1d, float):
+            move = f"{point.chg_bp_1d:+.1f}bp"
+        elif isinstance(point.chg_pct_1d, float):
+            move = f"{point.chg_pct_1d:+.2%}"
+        reading = "-"
+        if isinstance(point.value, float):
+            reading = f"{point.value:.3f}"
+        rows.append(
+            {
+                "driver": driver,
+                "reading": reading,
+                "move": move,
+                "signal": signal,
+                "confidence": round(_clamp01(confidence), 3),
+                "meaning": meaning,
+                "playbook": playbook,
+            }
+        )
+
+    vix = macro.get("VIX")
+    if vix and isinstance(vix.chg_pct_1d, float):
+        chg = vix.chg_pct_1d
+        if chg >= 0.05:
+            _add_row(
+                "VIX",
+                vix,
+                "risk-up",
+                "Volatility demand jumped, signaling stronger demand for protection.",
+                "Reduce position size and avoid adding leverage into uncertainty spikes.",
+                0.55 + min(0.4, chg / 0.12),
+            )
+        elif chg >= 0.02:
+            _add_row(
+                "VIX",
+                vix,
+                "risk-up",
+                "Volatility is rising and can pressure broad equity multiples.",
+                "Keep entries selective and prefer names with cleaner event profiles.",
+                0.5 + min(0.3, chg / 0.1),
+            )
+        elif chg <= -0.04:
+            _add_row(
+                "VIX",
+                vix,
+                "risk-down",
+                "Volatility is compressing, a setup that usually supports risk appetite.",
+                "Opportunity setups can be scaled gradually if other signals confirm.",
+                0.5 + min(0.3, abs(chg) / 0.1),
+            )
+        else:
+            _add_row(
+                "VIX",
+                vix,
+                "neutral",
+                "Volatility is stable with no acute fear impulse.",
+                "Let single-name signals drive execution rather than macro volatility.",
+                0.44,
+            )
+
+    us10y = macro.get("US10Y")
+    if us10y and isinstance(us10y.chg_bp_1d, float):
+        chg = us10y.chg_bp_1d
+        if chg >= 6:
+            _add_row(
+                "US10Y",
+                us10y,
+                "risk-up",
+                "Real yields moved higher, which can tighten valuation pressure on duration-sensitive stocks.",
+                "Trim stretched growth exposure unless valuation support is strong.",
+                0.56 + min(0.35, chg / 18.0),
+            )
+        elif chg <= -6:
+            _add_row(
+                "US10Y",
+                us10y,
+                "risk-down",
+                "Yields eased materially, often a tailwind for long-duration equities.",
+                "Bias toward quality growth where crowding risk remains controlled.",
+                0.56 + min(0.35, abs(chg) / 18.0),
+            )
+        else:
+            _add_row(
+                "US10Y",
+                us10y,
+                "neutral",
+                "Rates are range-bound, so macro discount-rate pressure is limited.",
+                "Focus on company-level signals and headline risk dispersion.",
+                0.45,
+            )
+
+    dxy = macro.get("DXY")
+    if dxy and isinstance(dxy.chg_pct_1d, float):
+        chg = dxy.chg_pct_1d
+        if chg >= 0.004:
+            _add_row(
+                "DXY",
+                dxy,
+                "risk-up",
+                "Dollar strength points to tighter global financial conditions.",
+                "Favor resilient cash-flow names over highly levered beta.",
+                0.54 + min(0.33, chg / 0.015),
+            )
+        elif chg <= -0.004:
+            _add_row(
+                "DXY",
+                dxy,
+                "risk-down",
+                "Dollar softness eases global liquidity pressure and supports risk assets.",
+                "Higher-beta expressions can work better when event risk is contained.",
+                0.54 + min(0.33, abs(chg) / 0.015),
+            )
+        else:
+            _add_row(
+                "DXY",
+                dxy,
+                "neutral",
+                "Dollar movement is muted and not a dominant macro impulse.",
+                "Do not over-weight FX-driven narratives in this run.",
+                0.43,
+            )
+
+    spy = macro.get("SPY")
+    if spy and isinstance(spy.chg_pct_1d, float):
+        chg = spy.chg_pct_1d
+        if chg <= -0.008:
+            _add_row(
+                "SPY",
+                spy,
+                "risk-up",
+                "Index-level tape is weak, which increases short-horizon drawdown risk.",
+                "Tighten stop discipline and avoid chasing weak intraday rebounds.",
+                0.52 + min(0.3, abs(chg) / 0.03),
+            )
+        elif chg >= 0.008:
+            _add_row(
+                "SPY",
+                spy,
+                "risk-down",
+                "Broad index strength confirms better near-term risk appetite.",
+                "Rotate toward names with both technical and valuation confirmation.",
+                0.52 + min(0.3, chg / 0.03),
+            )
+        else:
+            _add_row(
+                "SPY",
+                spy,
+                "neutral",
+                "Broad index tape is mixed and not providing a strong directional signal.",
+                "Keep gross exposure close to base risk budget.",
+                0.42,
+            )
+
+    gld = macro.get("GLD")
+    if gld and isinstance(gld.chg_pct_1d, float):
+        chg = gld.chg_pct_1d
+        if chg >= 0.01:
+            _add_row(
+                "GLD",
+                gld,
+                "risk-up",
+                "Gold bid suggests demand for macro hedge assets is increasing.",
+                "Respect tail-risk hedges and keep optionality in the book.",
+                0.48 + min(0.3, chg / 0.03),
+            )
+        elif chg <= -0.01:
+            _add_row(
+                "GLD",
+                gld,
+                "risk-down",
+                "Gold softness points to lower immediate stress demand.",
+                "Hedge intensity can be lighter if event flow remains calm.",
+                0.48 + min(0.3, abs(chg) / 0.03),
+            )
+        else:
+            _add_row(
+                "GLD",
+                gld,
+                "neutral",
+                "Gold is not signaling a large shift in macro stress pricing.",
+                "Use portfolio-specific risk signals as primary execution guide.",
+                0.4,
+            )
+
+    rows.sort(key=lambda row: (row["signal"] == "risk-up", row["confidence"]), reverse=True)
+    return rows
+
+
+def _macro_event_readthrough(macro_news: list[Headline]) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
+    seen_themes: set[str] = set()
+    for item in macro_news[:10]:
+        theme = _macro_event_theme(item.title)
+        if not theme or theme in seen_themes:
+            continue
+        impact, direction, _ = _classify_headline(item.title, sentiment_hint=item.sentiment_hint)
+        seen_themes.add(theme)
+        out.append(
+            {
+                "theme": theme.replace("-", " ").title(),
+                "signal": direction,
+                "impact": impact,
+                "headline": item.title,
+                "meaning": _macro_event_meaning(theme, direction),
+            }
+        )
+    out.sort(key=lambda row: (_impact_score(str(row.get("impact"))), row.get("signal") == "risk-up"), reverse=True)
+    return out
+
+
+def _macro_event_theme(title: str) -> str | None:
+    lower = title.lower()
+    for theme, keywords in _MACRO_EVENT_KEYWORDS.items():
+        if any(token in lower for token in keywords):
+            return theme
+    return None
+
+
+def _macro_event_meaning(theme: str, direction: str) -> str:
+    if theme == "inflation":
+        if direction == "risk-up":
+            return "Hotter inflation narratives can keep policy tighter, lifting yields and pressuring high-duration equities."
+        if direction == "risk-down":
+            return "Cooling inflation narratives can support duration assets and ease discount-rate pressure."
+        return "Inflation headlines are mixed; policy path remains data dependent."
+    if theme == "labor":
+        if direction == "risk-up":
+            return "Labor surprises can shift rate-cut expectations and increase policy uncertainty."
+        if direction == "risk-down":
+            return "Balanced labor data can reduce policy shock risk and stabilize equity beta."
+        return "Labor signals are mixed; monitor claims and payroll trend consistency."
+    if theme == "growth":
+        if direction == "risk-up":
+            return "Growth slowdown signals can weaken cyclical sentiment and raise downside skew."
+        if direction == "risk-down":
+            return "Growth stabilization supports cyclical participation and risk-taking."
+        return "Growth prints are mixed; cross-check with forward earnings revisions."
+    if theme == "policy":
+        if direction == "risk-up":
+            return "Hawkish policy signals can tighten liquidity and compress valuation multiples."
+        if direction == "risk-down":
+            return "Dovish policy signals can ease liquidity stress and support multiple expansion."
+        return "Policy communication is mixed; wait for confirmation from rates and dollar."
+    if theme == "energy":
+        if direction == "risk-up":
+            return "Energy shocks can lift inflation expectations and push rates volatility higher."
+        if direction == "risk-down":
+            return "Energy easing can reduce inflation pressure and help risk sentiment."
+        return "Energy signals are mixed; focus on pass-through into inflation and margins."
+    return "Macro event impact is mixed; monitor cross-asset confirmation."
+
+
+def _macro_portfolio_implications(
+    drivers: list[dict[str, Any]],
+    event_readthrough: list[dict[str, Any]],
+    positions: list[PositionAnalysis],
+) -> list[str]:
+    by_driver = {str(row.get("driver")): row for row in drivers if isinstance(row.get("driver"), str)}
+    weights = _portfolio_bucket_weights(positions)
+    out: list[str] = []
+
+    if positions:
+        top = positions[0]
+        if top.weight >= 0.45:
+            out.append(f"Portfolio concentration is high in {top.ticker} ({top.weight:.0%}); macro shocks can transmit quickly.")
+
+    vix_row = by_driver.get("VIX")
+    if isinstance(vix_row, dict) and vix_row.get("signal") == "risk-up":
+        out.append("Volatility regime is firming; prioritize incremental entries over full-size adds.")
+
+    rates_row = by_driver.get("US10Y")
+    if isinstance(rates_row, dict) and rates_row.get("signal") == "risk-up" and weights["tech"] >= 0.3:
+        out.append("Rising yields with tech-heavy exposure raises multiple-compression risk for growth holdings.")
+    elif isinstance(rates_row, dict) and rates_row.get("signal") == "risk-down" and weights["tech"] >= 0.3:
+        out.append("Falling yields improve setup for quality growth exposure if headline risk stays contained.")
+
+    dxy_row = by_driver.get("DXY")
+    if isinstance(dxy_row, dict) and dxy_row.get("signal") == "risk-up":
+        out.append("Dollar strength can tighten global liquidity; keep cyclical beta sized conservatively.")
+
+    policy_or_inflation_risk = any(
+        isinstance(row, dict)
+        and row.get("signal") == "risk-up"
+        and str(row.get("theme")).lower() in {"inflation", "policy"}
+        for row in event_readthrough
+    )
+    if policy_or_inflation_risk:
+        out.append("Inflation/policy event flow is still hot; rate-sensitive equities need stronger valuation support.")
+
+    if not out:
+        out.append("Macro impulse is balanced in this run; single-name alpha and valuation dispersion matter more than top-down risk.")
+    return out
+
+
+def _portfolio_bucket_weights(positions: list[PositionAnalysis]) -> dict[str, float]:
+    tech = 0.0
+    financials = 0.0
+    defensive = 0.0
+    broad = 0.0
+    for row in positions:
+        ticker = row.ticker.upper()
+        if ticker in _TECH_TICKERS:
+            tech += row.weight
+        if ticker in _FINANCIAL_TICKERS:
+            financials += row.weight
+        if ticker in _DEFENSIVE_TICKERS:
+            defensive += row.weight
+        if ticker in {"SPY", "VOO", "IVV", "VTI", "QQQ"}:
+            broad += row.weight
+    return {
+        "tech": _clamp01(tech),
+        "financials": _clamp01(financials),
+        "defensive": _clamp01(defensive),
+        "broad": _clamp01(broad),
+    }
+
+
+def _macro_context_summary(
+    drivers: list[dict[str, Any]],
+    event_readthrough: list[dict[str, Any]],
+    implications: list[str],
+) -> tuple[str, str]:
+    risk_up = sum(float(row.get("confidence") or 0.0) for row in drivers if row.get("signal") == "risk-up")
+    risk_down = sum(float(row.get("confidence") or 0.0) for row in drivers if row.get("signal") == "risk-down")
+    regime_bias = "balanced"
+    if risk_up > risk_down + 0.25:
+        regime_bias = "risk-up"
+    elif risk_down > risk_up + 0.25:
+        regime_bias = "risk-down"
+
+    active_drivers = [str(row.get("driver")) for row in drivers if row.get("signal") != "neutral"][:3]
+    active_themes = [str(row.get("theme")) for row in event_readthrough[:2]]
+
+    if regime_bias == "risk-up":
+        summary = "Macro readthrough is risk-up with tighter cross-asset conditions."
+    elif regime_bias == "risk-down":
+        summary = "Macro readthrough is supportive with improving risk appetite signals."
+    else:
+        summary = "Macro readthrough is balanced; no single top-down regime dominates."
+
+    if active_drivers:
+        summary += f" Key drivers: {', '.join(active_drivers)}."
+    if active_themes:
+        summary += f" Event lens: {', '.join(active_themes)}."
+    if implications:
+        summary += f" Portfolio focus: {implications[0]}"
+    return summary[:420], regime_bias
 
 
 def _build_pulse(

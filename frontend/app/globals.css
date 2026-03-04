@@ -565,6 +565,10 @@ a {
   border-left: 4px solid #d64d5f;
 }
 
+.signal-item.macro-driver {
+  border-left: 4px solid #6a84a8;
+}
+
 .signal-head {
   display: flex;
   align-items: center;
@@ -640,6 +644,20 @@ a {
   border-color: #d5dce7;
   background: #f6f8fb;
   color: #4c607c;
+}
+
+.macro-meaning-meta {
+  margin-top: 8px;
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.macro-driver-tags {
+  margin-top: 6px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
 }
 
 .grid {

@@ -410,6 +410,13 @@ export default function AnalysisPage() {
   const alphaUnderBias = asRecordArray(alphaBook?.underweightBias).slice(0, 5);
   const submodels = asRecord(signals?.submodels);
   const technicalSummary = asRecord(signals?.technicalSummary);
+  const macroContext = asRecord(signals?.macroContext);
+  const macroContextSummary = typeof macroContext?.summary === "string" ? macroContext.summary : "";
+  const macroContextRegime = macroContext?.regimeBias === "risk-up" || macroContext?.regimeBias === "risk-down" ? macroContext.regimeBias : "balanced";
+  const macroContextRegimeClass = macroContextRegime === "balanced" ? "neutral" : macroContextRegime;
+  const macroContextDrivers = asRecordArray(macroContext?.drivers).slice(0, 6);
+  const macroContextEvents = asRecordArray(macroContext?.eventReadthrough).slice(0, 4);
+  const macroContextImplications = asStringArray(macroContext?.portfolioImplications).slice(0, 4);
   const holdingsColSpan =
     holdingsView === "full" ? 15 : holdingsView === "quant" ? 9 : 8;
 
@@ -862,6 +869,60 @@ export default function AnalysisPage() {
                     </article>
 
                     <article className="panel">
+                      <h3>Macro: What It Means</h3>
+                      <p className="helper-text">Plain-language readthrough for non-experts: what macro moves imply for positioning.</p>
+                      <div className="notes" style={{ marginTop: 10 }}>
+                        {macroContextSummary ? <div className="note">{macroContextSummary}</div> : <div className="note">Interpretation layer is calibrating for this run.</div>}
+                      </div>
+                      <div className="macro-meaning-meta">
+                        <span className={`dir ${macroContextRegimeClass}`}>{macroContextRegime}</span>
+                      </div>
+                      {macroContextDrivers.length > 0 && (
+                        <div className="signal-list" style={{ marginTop: 10 }}>
+                          {macroContextDrivers.slice(0, 4).map((row, idx) => {
+                            const driver = typeof row.driver === "string" ? row.driver : `Driver ${idx + 1}`;
+                            const move = typeof row.move === "string" ? row.move : "-";
+                            const signal = row.signal === "risk-up" || row.signal === "risk-down" ? row.signal : "neutral";
+                            const meaning = typeof row.meaning === "string" ? row.meaning : "";
+                            const playbook = typeof row.playbook === "string" ? row.playbook : "";
+                            return (
+                              <div className="signal-item macro-driver" key={`${driver}-${idx}`}>
+                                <div className="signal-head">
+                                  <strong>{driver}</strong>
+                                  <span className="signal-meta">{move}</span>
+                                </div>
+                                <div className="macro-driver-tags">
+                                  <span className={`dir ${signal}`}>{signal}</span>
+                                </div>
+                                {meaning && <div className="signal-text">{meaning}</div>}
+                                {playbook && <div className="signal-meta">{playbook}</div>}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                      {(macroContextEvents.length > 0 || macroContextImplications.length > 0) && (
+                        <div className="notes" style={{ marginTop: 10 }}>
+                          {macroContextEvents.slice(0, 2).map((row, idx) => {
+                            const theme = typeof row.theme === "string" ? row.theme : `Macro Event ${idx + 1}`;
+                            const meaning = typeof row.meaning === "string" ? row.meaning : "";
+                            return (
+                              <div className="note" key={`${theme}-${idx}`}>
+                                <strong>{theme}:</strong> {meaning || "Event readthrough pending."}
+                              </div>
+                            );
+                          })}
+                          {macroContextImplications.slice(0, 2).map((line, idx) => (
+                            <div className="note" key={`implication-${idx}`}>
+                              <strong>Portfolio:</strong> {line}
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </article>
+                  </section>
+
+                  <section className="panel" style={{ marginTop: 14 }}>
                       <h3>Model Notes</h3>
                       <div className="notes">
                         {analysis.notes.map((note) => (
@@ -870,7 +931,6 @@ export default function AnalysisPage() {
                           </div>
                         ))}
                       </div>
-                    </article>
                   </section>
                 </>
               )}
