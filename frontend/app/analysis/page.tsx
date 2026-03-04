@@ -12,9 +12,11 @@ const UI_PREFS_MAX_AGE_MS = 1000 * 60 * 60 * 24 * 30;
 
 type ViewTab = "overview" | "signals" | "holdings" | "news";
 type RailTab = "macro" | "ticker" | "sec";
+type HoldingsView = "essentials" | "quant" | "full";
 type UiPrefs = {
   activeTab: ViewTab;
   railTab: RailTab;
+  holdingsView: HoldingsView;
   activeScenario: string;
   scenarioScale: number;
   savedAt: number;
@@ -26,6 +28,10 @@ function isViewTab(value: string | null): value is ViewTab {
 
 function isRailTab(value: string | null): value is RailTab {
   return value === "macro" || value === "ticker" || value === "sec";
+}
+
+function isHoldingsView(value: string | null): value is HoldingsView {
+  return value === "essentials" || value === "quant" || value === "full";
 }
 
 function pct(value: number | null | undefined): string {
@@ -73,6 +79,8 @@ export default function AnalysisPage() {
   const [scenarioScale, setScenarioScale] = useState(1);
   const [activeTab, setActiveTab] = useState<ViewTab>("overview");
   const [railTab, setRailTab] = useState<RailTab>("macro");
+  const [holdingsView, setHoldingsView] = useState<HoldingsView>("essentials");
+  const [expandedTicker, setExpandedTicker] = useState<string | null>(null);
   const [prefsHydrated, setPrefsHydrated] = useState(false);
 
   useEffect(() => {
@@ -80,12 +88,14 @@ export default function AnalysisPage() {
     let hasUrlRail = false;
     let hasUrlScenario = false;
     let hasUrlShock = false;
+    let hasUrlHoldingsView = false;
     try {
       const params = new URLSearchParams(window.location.search);
       const urlTab = params.get("tab");
       const urlRail = params.get("rail");
       const urlScenario = params.get("scenario");
       const urlShock = params.get("shock");
+      const urlHoldingsView = params.get("hview");
       if (isViewTab(urlTab)) {
         setActiveTab(urlTab);
         hasUrlTab = true;
@@ -105,6 +115,10 @@ export default function AnalysisPage() {
           hasUrlShock = true;
         }
       }
+      if (isHoldingsView(urlHoldingsView)) {
+        setHoldingsView(urlHoldingsView);
+        hasUrlHoldingsView = true;
+      }
     } catch {
       // Ignore malformed URL params and continue with persisted preferences.
     }
@@ -123,8 +137,10 @@ export default function AnalysisPage() {
       }
       const savedTab = typeof prefs.activeTab === "string" ? prefs.activeTab : null;
       const savedRail = typeof prefs.railTab === "string" ? prefs.railTab : null;
+      const savedHoldingsView = typeof prefs.holdingsView === "string" ? prefs.holdingsView : null;
       if (!hasUrlTab && isViewTab(savedTab)) setActiveTab(savedTab);
       if (!hasUrlRail && isRailTab(savedRail)) setRailTab(savedRail);
+      if (!hasUrlHoldingsView && isHoldingsView(savedHoldingsView)) setHoldingsView(savedHoldingsView);
       if (!hasUrlScenario && typeof prefs.activeScenario === "string") setActiveScenario(prefs.activeScenario);
       if (!hasUrlShock && typeof prefs.scenarioScale === "number" && Number.isFinite(prefs.scenarioScale)) {
         setScenarioScale(Math.min(2, Math.max(0.5, prefs.scenarioScale)));
@@ -260,6 +276,19 @@ export default function AnalysisPage() {
   const alphaUnderBias = asRecordArray(alphaBook?.underweightBias).slice(0, 5);
   const submodels = asRecord(signals?.submodels);
   const technicalSummary = asRecord(signals?.technicalSummary);
+  const holdingsColSpan =
+    holdingsView === "full" ? 15 : holdingsView === "quant" ? 9 : 8;
+
+  const convictionLabel = (row: Record<string, unknown>) => {
+    const confidence = asNumber(row.confidence) || 0;
+    const opportunity = asNumber(row.opportunityIndex) || 0;
+    const distribution = asNumber(row.distributionIndex) || 0;
+    const edge = Math.abs(opportunity - distribution);
+    const score = Math.min(1, confidence * (0.6 + edge));
+    if (score >= 0.66) return { label: "high", cls: "high" as const };
+    if (score >= 0.45) return { label: "medium", cls: "medium" as const };
+    return { label: "low", cls: "low" as const };
+  };
   const submodelRows = useMemo(() => {
     if (!submodels) return [] as Array<{ name: string; score: number; confidence: number }>;
     return Object.entries(submodels)
@@ -286,16 +315,29 @@ export default function AnalysisPage() {
   }, [scenarios, activeScenario]);
 
   useEffect(() => {
+    if (!expandedTicker) return;
+    const exists = tickerIntel.some((row) => typeof row.ticker === "string" && row.ticker === expandedTicker);
+    if (!exists) setExpandedTicker(null);
+  }, [tickerIntel, expandedTicker]);
+
+  useEffect(() => {
+    if (holdingsView !== "essentials" && expandedTicker) {
+      setExpandedTicker(null);
+    }
+  }, [holdingsView, expandedTicker]);
+
+  useEffect(() => {
     if (!prefsHydrated) return;
     const payload: UiPrefs = {
       activeTab,
       railTab,
+      holdingsView,
       activeScenario,
       scenarioScale,
       savedAt: Date.now(),
     };
     localStorage.setItem(UI_PREFS_KEY, JSON.stringify(payload));
-  }, [activeTab, railTab, activeScenario, scenarioScale, prefsHydrated]);
+  }, [activeTab, railTab, holdingsView, activeScenario, scenarioScale, prefsHydrated]);
 
   useEffect(() => {
     if (!prefsHydrated) return;
@@ -312,12 +354,13 @@ export default function AnalysisPage() {
     } else {
       params.delete("shock");
     }
+    params.set("hview", holdingsView);
     const nextQuery = params.toString();
     const currentQuery = window.location.search.startsWith("?") ? window.location.search.slice(1) : "";
     if (nextQuery === currentQuery) return;
     const nextUrl = `${window.location.pathname}${nextQuery ? `?${nextQuery}` : ""}${window.location.hash}`;
     window.history.replaceState({}, "", nextUrl);
-  }, [activeTab, railTab, activeScenario, scenarioScale, prefsHydrated]);
+  }, [activeTab, railTab, holdingsView, activeScenario, scenarioScale, prefsHydrated]);
 
   const selectedScenario = scenarios.find((row) => row.id === activeScenario) || scenarios[0] || null;
   const scenarioExposed = selectedScenario ? asRecordArray(selectedScenario.exposed) : [];
@@ -953,6 +996,17 @@ export default function AnalysisPage() {
                 <>
                   <section className="panel">
                     <h3>Holdings Intelligence</h3>
+                    <div className="section-switcher" style={{ marginTop: 10 }}>
+                      <button className={`switch-chip ${holdingsView === "essentials" ? "active" : ""}`} onClick={() => setHoldingsView("essentials")}>
+                        Essentials
+                      </button>
+                      <button className={`switch-chip ${holdingsView === "quant" ? "active" : ""}`} onClick={() => setHoldingsView("quant")}>
+                        Quant
+                      </button>
+                      <button className={`switch-chip ${holdingsView === "full" ? "active" : ""}`} onClick={() => setHoldingsView("full")}>
+                        Full
+                      </button>
+                    </div>
                     {tickerIntel.length === 0 ? (
                       <div className="status">Ticker intelligence was unavailable in this run.</div>
                     ) : (
@@ -962,19 +1016,44 @@ export default function AnalysisPage() {
                             <tr>
                               <th>Ticker</th>
                               <th>Action</th>
-                              <th>Tech State</th>
-                              <th>Tech Score</th>
-                              <th>RSI</th>
-                              <th>ADX</th>
-                              <th>Value View</th>
-                              <th>Val Inputs</th>
-                              <th>Fair Value</th>
-                              <th>MoS</th>
-                              <th>Opportunity</th>
-                              <th>Distribution</th>
-                              <th>Panic</th>
-                              <th>Crowding</th>
-                              <th>Themes</th>
+                              {holdingsView === "essentials" && (
+                                <>
+                                  <th>Conviction</th>
+                                  <th>Value View</th>
+                                  <th>Tech State</th>
+                                  <th>MoS</th>
+                                  <th>Opportunity</th>
+                                  <th>Details</th>
+                                </>
+                              )}
+                              {holdingsView === "quant" && (
+                                <>
+                                  <th>Tech Score</th>
+                                  <th>RSI</th>
+                                  <th>ADX</th>
+                                  <th>Opportunity</th>
+                                  <th>Distribution</th>
+                                  <th>Panic</th>
+                                  <th>Crowding</th>
+                                </>
+                              )}
+                              {holdingsView === "full" && (
+                                <>
+                                  <th>Tech State</th>
+                                  <th>Tech Score</th>
+                                  <th>RSI</th>
+                                  <th>ADX</th>
+                                  <th>Value View</th>
+                                  <th>Val Inputs</th>
+                                  <th>Fair Value</th>
+                                  <th>MoS</th>
+                                  <th>Opportunity</th>
+                                  <th>Distribution</th>
+                                  <th>Panic</th>
+                                  <th>Crowding</th>
+                                  <th>Themes</th>
+                                </>
+                              )}
                             </tr>
                           </thead>
                           <tbody>
@@ -997,26 +1076,92 @@ export default function AnalysisPage() {
                               const techScore = asNumber(technical?.technicalScore);
                               const rsi = asNumber(technical?.rsi14);
                               const adx = asNumber(technical?.adx14);
+                              const rationale = typeof row.rationale === "string" ? row.rationale : "";
+                              const confidence = asNumber(row.confidence);
                               const themes = asStringArray(row.themes).slice(0, 2).join(", ") || "-";
-                              return (
-                                <tr key={`${ticker}-${idx}`}>
-                                  <td className="mono">{ticker}</td>
-                                  <td>{action}</td>
-                                  <td>{techState}</td>
-                                  <td>{pct(techScore)}</td>
-                                  <td>{rsi === null ? "-" : rsi.toFixed(1)}</td>
-                                  <td>{adx === null ? "-" : adx.toFixed(1)}</td>
-                                  <td>{valueView}</td>
-                                  <td>{valInputs === null ? "-" : valInputs.toFixed(0)}</td>
-                                  <td>{money(fairValue)}</td>
-                                  <td className={marginSafety !== null && marginSafety < 0 ? "neg" : "pos"}>{pct(marginSafety)}</td>
-                                  <td>{pct(opportunity)}</td>
-                                  <td>{pct(distribution)}</td>
-                                  <td>{pct(panic)}</td>
-                                  <td>{pct(crowding)}</td>
-                                  <td>{themes}</td>
-                                </tr>
-                              );
+                              const conviction = convictionLabel(row);
+                              const isExpanded = expandedTicker === ticker;
+                              return [
+                                  <tr key={`row-${ticker}-${idx}`} className="intel-row">
+                                    <td className="mono">{ticker}</td>
+                                    <td>{action}</td>
+                                    {holdingsView === "essentials" && (
+                                      <>
+                                        <td>
+                                          <span className={`severity ${conviction.cls}`}>{conviction.label}</span>
+                                        </td>
+                                        <td>{valueView}</td>
+                                        <td>{techState}</td>
+                                        <td className={marginSafety !== null && marginSafety < 0 ? "neg" : "pos"}>{pct(marginSafety)}</td>
+                                        <td>{pct(opportunity)}</td>
+                                        <td>
+                                          <button
+                                            type="button"
+                                            className="mini-btn"
+                                            onClick={() => setExpandedTicker(isExpanded ? null : ticker)}
+                                          >
+                                            {isExpanded ? "Hide" : "Open"}
+                                          </button>
+                                        </td>
+                                      </>
+                                    )}
+                                    {holdingsView === "quant" && (
+                                      <>
+                                        <td>{pct(techScore)}</td>
+                                        <td>{rsi === null ? "-" : rsi.toFixed(1)}</td>
+                                        <td>{adx === null ? "-" : adx.toFixed(1)}</td>
+                                        <td>{pct(opportunity)}</td>
+                                        <td>{pct(distribution)}</td>
+                                        <td>{pct(panic)}</td>
+                                        <td>{pct(crowding)}</td>
+                                      </>
+                                    )}
+                                    {holdingsView === "full" && (
+                                      <>
+                                        <td>{techState}</td>
+                                        <td>{pct(techScore)}</td>
+                                        <td>{rsi === null ? "-" : rsi.toFixed(1)}</td>
+                                        <td>{adx === null ? "-" : adx.toFixed(1)}</td>
+                                        <td>{valueView}</td>
+                                        <td>{valInputs === null ? "-" : valInputs.toFixed(0)}</td>
+                                        <td>{money(fairValue)}</td>
+                                        <td className={marginSafety !== null && marginSafety < 0 ? "neg" : "pos"}>{pct(marginSafety)}</td>
+                                        <td>{pct(opportunity)}</td>
+                                        <td>{pct(distribution)}</td>
+                                        <td>{pct(panic)}</td>
+                                        <td>{pct(crowding)}</td>
+                                        <td>{themes}</td>
+                                      </>
+                                    )}
+                                  </tr>,
+                                  isExpanded ? (
+                                    <tr key={`detail-${ticker}-${idx}`} className="intel-expand">
+                                      <td colSpan={holdingsColSpan}>
+                                        <div className="intel-detail-grid">
+                                          <div>
+                                            <div className="kpi-label">Positioning Context</div>
+                                            <div className="note" style={{ marginTop: 6 }}>
+                                              Confidence {pct(confidence)} · Alpha {pct(asNumber(row.alphaScore))}
+                                            </div>
+                                            <div className="note">{rationale || "No rationale text was available in this run."}</div>
+                                          </div>
+                                          <div>
+                                            <div className="kpi-label">Valuation & Inputs</div>
+                                            <div className="note">Fair value {money(fairValue)} · margin {pct(marginSafety)}</div>
+                                            <div className="note">Input coverage {valInputs === null ? "-" : `${valInputs.toFixed(0)} factors`}</div>
+                                            <div className="note">Value view {valueView}</div>
+                                          </div>
+                                          <div>
+                                            <div className="kpi-label">Technicals</div>
+                                            <div className="note">State {techState} · score {pct(techScore)}</div>
+                                            <div className="note">RSI {rsi === null ? "-" : rsi.toFixed(1)} · ADX {adx === null ? "-" : adx.toFixed(1)}</div>
+                                            <div className="note">Themes {themes}</div>
+                                          </div>
+                                        </div>
+                                      </td>
+                                    </tr>
+                                  ) : null,
+                                ];
                             })}
                           </tbody>
                         </table>
