@@ -13,9 +13,12 @@ class Settings(BaseSettings):
     quote_miss_cache_ttl_seconds: int = 15
     history_cache_ttl_seconds: int = 3600
     history_miss_cache_ttl_seconds: int = 60
+    technical_cache_ttl_seconds: int = 1800
     macro_cache_ttl_seconds: int = 1800
     news_cache_ttl_seconds: int = 900
     alpha_vantage_max_calls_per_request: int = 4
+    alpha_vantage_technical_calls_per_ticker: int = 2
+    alpha_vantage_technical_enriched_tickers: int = 2
     max_positions_for_risk: int = 5
     max_positions_for_intel: int = 8
     max_ticker_news_symbols: int = 5

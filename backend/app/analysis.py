@@ -386,6 +386,15 @@ class AnalysisService:
             spy_task,
             asyncio.gather(*openbb_tasks, return_exceptions=True),
         )
+        technical_tasks = [
+            self.market.get_technical_snapshot(
+                p.ticker,
+                prices=series,
+                enrich_remote=idx < max(0, self.settings.alpha_vantage_technical_enriched_tickers),
+            )
+            for idx, (p, series) in enumerate(zip(tracked, histories, strict=False))
+        ]
+        technical_rows = await asyncio.gather(*technical_tasks, return_exceptions=True) if technical_tasks else []
         spy_metrics = _price_metrics(spy_history)
 
         macro_panic, macro_relief = _macro_stress_scores(macro)
@@ -401,8 +410,9 @@ class AnalysisService:
         ticker_intel: list[dict[str, Any]] = []
         opportunities: list[dict[str, Any]] = []
         exit_signals: list[dict[str, Any]] = []
-        for p, series, openbb_raw in zip(tracked, histories, openbb_rows, strict=False):
+        for p, series, openbb_raw, tech_raw in zip(tracked, histories, openbb_rows, technical_rows, strict=False):
             openbb = openbb_raw if isinstance(openbb_raw, dict) else {}
+            technical = tech_raw if isinstance(tech_raw, dict) else {}
             metrics = _price_metrics(series)
             returns_count = int(metrics.get("returnsCount", 0))
             ticker_news = news.get(p.ticker, [])[: self.settings.ticker_news_per_symbol]
@@ -417,6 +427,12 @@ class AnalysisService:
             drawdown = metrics.get("drawdown120") or 0.0
             ret5 = metrics.get("ret5") or 0.0
             vol_ratio = metrics.get("volRatio") or 1.0
+            technical_oversold = _as_float(technical.get("oversoldScore")) or 0.0
+            technical_overbought = _as_float(technical.get("overboughtScore")) or 0.0
+            technical_trend = _as_float(technical.get("trendScore")) or 0.5
+            technical_reversal = _as_float(technical.get("reversalScore")) or 0.0
+            technical_strength = _as_float(technical.get("trendStrength")) or 0.35
+            technical_score = _as_float(technical.get("technicalScore")) or 0.5
 
             oversold = _clamp01(
                 (max(0.0, -ret5 - 0.015) / 0.08) * 0.25
@@ -424,6 +440,7 @@ class AnalysisService:
                 + (max(0.0, 0.35 - (location if location is not None else 0.5)) / 0.35) * 0.2
                 + (max(0.0, drawdown - 0.1) / 0.2) * 0.15
                 + (max(0.0, news_stats["riskUpShare"] - 0.55) / 0.45) * 0.15
+                + (technical_oversold * 0.2)
             )
             overheated = _clamp01(
                 (max(0.0, ret5 - 0.018) / 0.08) * 0.25
@@ -431,25 +448,45 @@ class AnalysisService:
                 + (max(0.0, (location if location is not None else 0.5) - 0.7) / 0.3) * 0.2
                 + (max(0.0, news_stats["riskDownShare"] - 0.55) / 0.45) * 0.15
                 + (max(0.0, news_stats["buzz"] - 0.5) / 0.5) * 0.15
+                + (technical_overbought * 0.22)
             )
 
             vol_spike_factor = min(1.0, max(0.0, vol_ratio - 0.8))
-            panic_score = _clamp01((oversold * 0.5) + (vol_spike_factor * 0.2) + (macro_panic * 0.2) + (news_stats["eventRisk"] * 0.1))
-            crowding_score = _clamp01((overheated * 0.55) + (news_stats["buzz"] * 0.15) + (p.weight * 0.15) + (openbb_scores["flow"] * 0.15))
+            panic_score = _clamp01(
+                (oversold * 0.4)
+                + (vol_spike_factor * 0.16)
+                + (macro_panic * 0.2)
+                + (news_stats["eventRisk"] * 0.1)
+                + (technical_reversal * 0.08)
+                + (max(0.0, 0.48 - technical_trend) * 0.06)
+            )
+            crowding_score = _clamp01(
+                (overheated * 0.46)
+                + (news_stats["buzz"] * 0.15)
+                + (p.weight * 0.14)
+                + (openbb_scores["flow"] * 0.13)
+                + (technical_overbought * 0.12)
+            )
             opportunity_index = _clamp01(
-                (panic_score * 0.45)
+                (panic_score * 0.37)
                 + (max(0.0, 0.55 - crowding_score) * 0.25)
                 + (valuation_intel["undervaluationScore"] * 0.2)
                 + (openbb_scores["quality"] * 0.1)
+                + (technical_oversold * 0.1)
+                + (technical_trend * technical_strength * 0.05)
             )
             distribution_index = _clamp01(
-                (crowding_score * 0.45)
+                (crowding_score * 0.42)
                 + (max(0.0, 0.45 - panic_score) * 0.2)
                 + (openbb_scores["flow"] * 0.2)
                 + (valuation_intel["overvaluationScore"] * 0.15)
+                + (technical_overbought * 0.12)
+                + (max(0.0, technical_trend - 0.65) * 0.1)
             )
             confidence = _signal_confidence(returns_count, len(ticker_news), relative_20)
             confidence = _clamp01(confidence + (0.08 if openbb_scores["coverage"] > 0 else 0.0))
+            if technical:
+                confidence = _clamp01(confidence + 0.06)
 
             action_bias = _action_bias(
                 opportunity_index,
@@ -484,6 +521,7 @@ class AnalysisService:
                 "headlineCount": len(ticker_news),
                 "rationale": rationale,
                 "alphaScore": round((opportunity_index - distribution_index) * confidence, 3),
+                "technical": technical,
                 "openbb": openbb,
                 "valuation": valuation_intel,
                 "features": {
@@ -500,6 +538,11 @@ class AnalysisService:
                     "marginSafety": valuation_intel["marginSafety"],
                     "valuationVerdict": valuation_intel["verdict"],
                     "valuationConfidence": valuation_intel["confidence"],
+                    "technicalScore": round(technical_score, 3),
+                    "technicalTrendScore": round(technical_trend, 3),
+                    "technicalOversold": round(technical_oversold, 3),
+                    "technicalOverbought": round(technical_overbought, 3),
+                    "technicalState": str(technical.get("signalState") or "unknown"),
                 },
             }
             ticker_intel.append(intel_row)
@@ -603,6 +646,7 @@ class AnalysisService:
             "construction": construction,
             "alphaBook": alpha_book,
             "submodels": submodels,
+            "technicalSummary": _technical_summary(ticker_intel, tracked_count=len(tracked)),
         }
 
     def _build_signals(
@@ -619,13 +663,22 @@ class AnalysisService:
         watchouts = self._build_watchouts(positions, radar, behavioral)
         scenarios = self._build_scenarios(positions)
         warnings = self._build_warnings(notes, risk, macro, radar, scenarios, behavioral)
-        pulse = _build_pulse(warnings, scenarios)
+        pulse = _build_pulse(
+            warnings=warnings,
+            scenarios=scenarios,
+            behavioral=behavioral,
+            radar=radar,
+            macro=macro,
+            risk=risk,
+        )
+        theme_board = _build_theme_board(radar, behavioral)
         return {
             "pulse": pulse,
             "warnings": warnings,
             "watchouts": watchouts,
             "radar": radar,
             "scenarios": scenarios,
+            "themes": theme_board,
             "regime": behavioral.get("regime", {}),
             "tickerIntel": behavioral.get("tickerIntel", []),
             "opportunities": behavioral.get("opportunities", []),
@@ -636,6 +689,7 @@ class AnalysisService:
             "construction": behavioral.get("construction", {}),
             "alphaBook": behavioral.get("alphaBook", {}),
             "submodels": behavioral.get("submodels", {}),
+            "technicalSummary": behavioral.get("technicalSummary", {}),
         }
 
     def _build_headline_radar(self, news: dict[str, list[Headline]], top_tickers: list[str]) -> list[dict[str, Any]]:
@@ -885,6 +939,28 @@ class AnalysisService:
                         }
                     )
 
+        technical_summary = behavioral.get("technicalSummary", {}) if isinstance(behavioral, dict) else {}
+        if isinstance(technical_summary, dict):
+            bearish = technical_summary.get("bearishShare")
+            overbought = technical_summary.get("overboughtShare")
+            oversold = technical_summary.get("oversoldShare")
+            if isinstance(bearish, (int, float)) and isinstance(overbought, (int, float)) and bearish >= 0.58 and overbought >= 0.5:
+                out.append(
+                    {
+                        "title": "Technical Exhaustion",
+                        "severity": "medium",
+                        "reason": f"Technical stack shows bearish breadth {bearish:.0%} with overbought pressure {overbought:.0%}.",
+                    }
+                )
+            elif isinstance(oversold, (int, float)) and oversold >= 0.56:
+                out.append(
+                    {
+                        "title": "Washout Setup",
+                        "severity": "low",
+                        "reason": f"Oversold breadth is elevated at {oversold:.0%}, increasing mean-reversion potential.",
+                    }
+                )
+
         construction = behavioral.get("construction", {}) if isinstance(behavioral, dict) else {}
         if isinstance(construction, dict):
             projected_top1 = construction.get("projectedTop1")
@@ -930,6 +1006,7 @@ class AnalysisService:
             "watchouts": list(base.get("watchouts", [])),
             "radar": list(base.get("radar", [])),
             "scenarios": list(base.get("scenarios", [])),
+            "themes": list(base.get("themes", [])),
             "regime": base.get("regime", {}),
             "tickerIntel": list(base.get("tickerIntel", [])),
             "opportunities": list(base.get("opportunities", [])),
@@ -940,6 +1017,7 @@ class AnalysisService:
             "construction": base.get("construction", {}),
             "alphaBook": base.get("alphaBook", {}),
             "submodels": base.get("submodels", {}),
+            "technicalSummary": base.get("technicalSummary", {}),
         }
 
         ai_pulse = ai.get("pulse")
@@ -1013,6 +1091,7 @@ class AnalysisService:
         merged["warnings"] = merged["warnings"][:6]
         merged["watchouts"] = merged["watchouts"][:10]
         merged["radar"] = merged["radar"][:14]
+        merged["themes"] = merged["themes"][:6]
         merged["tickerIntel"] = merged["tickerIntel"][:10]
         merged["opportunities"] = merged["opportunities"][:4]
         merged["exitSignals"] = merged["exitSignals"][:4]
@@ -1881,24 +1960,329 @@ def _clamp01(value: float) -> float:
     return max(0.0, min(1.0, value))
 
 
-def _build_pulse(warnings: list[dict[str, str]], scenarios: list[dict[str, Any]]) -> dict[str, Any]:
-    worst_impact = min((s["portfolioImpactPct"] for s in scenarios), default=0.0)
+def _build_pulse(
+    warnings: list[dict[str, str]],
+    scenarios: list[dict[str, Any]],
+    behavioral: dict[str, Any],
+    radar: list[dict[str, Any]],
+    macro: dict[str, MacroPoint],
+    risk: dict[str, float | None],
+) -> dict[str, Any]:
+    worst = min(scenarios, key=lambda row: row.get("portfolioImpactPct", 0.0)) if scenarios else None
+    worst_impact = _as_float(worst.get("portfolioImpactPct")) if isinstance(worst, dict) else 0.0
+    worst_impact = worst_impact if worst_impact is not None else 0.0
     high_alerts = sum(1 for w in warnings if w.get("severity") == "high")
-    if high_alerts >= 1 or worst_impact <= -0.008:
+
+    regime = behavioral.get("regime", {}) if isinstance(behavioral, dict) else {}
+    regime_state = str(regime.get("state") or "mixed")
+    regime_panic = _as_float(regime.get("panicScore")) or 0.0
+
+    predictions = behavioral.get("predictions", {}) if isinstance(behavioral, dict) else {}
+    horizon5d = predictions.get("horizon5d") if isinstance(predictions, dict) else {}
+    downside_5d = _as_float(horizon5d.get("downsideProb")) if isinstance(horizon5d, dict) else None
+    upside_5d = _as_float(horizon5d.get("upsideProb")) if isinstance(horizon5d, dict) else None
+    confidence = _as_float(predictions.get("confidence")) if isinstance(predictions, dict) else None
+    confidence = confidence if confidence is not None else 0.0
+
+    technical_summary = behavioral.get("technicalSummary", {}) if isinstance(behavioral, dict) else {}
+    tech_bearish = _as_float(technical_summary.get("bearishShare")) if isinstance(technical_summary, dict) else None
+    tech_bullish = _as_float(technical_summary.get("bullishShare")) if isinstance(technical_summary, dict) else None
+    tech_oversold = _as_float(technical_summary.get("oversoldShare")) if isinstance(technical_summary, dict) else None
+    tech_overbought = _as_float(technical_summary.get("overboughtShare")) if isinstance(technical_summary, dict) else None
+
+    risk_up_high = sum(1 for row in radar if row.get("direction") == "risk-up" and row.get("impact") == "high")
+    risk_down_high = sum(1 for row in radar if row.get("direction") == "risk-down" and row.get("impact") == "high")
+
+    stance = "balanced"
+    if (
+        high_alerts >= 2
+        or regime_state == "stress"
+        or (downside_5d is not None and downside_5d >= 0.58)
+        or worst_impact <= -0.01
+        or risk_up_high >= 2
+    ):
         stance = "risk-off"
-    elif worst_impact >= 0.004 and high_alerts == 0:
+    elif (
+        high_alerts == 0
+        and regime_state in {"calm", "mixed"}
+        and (upside_5d is not None and downside_5d is not None and upside_5d - downside_5d >= 0.08)
+        and worst_impact >= -0.004
+        and risk_down_high >= risk_up_high
+    ):
         stance = "risk-on"
-    else:
-        stance = "balanced"
 
-    if scenarios:
-        worst = min(scenarios, key=lambda row: row["portfolioImpactPct"])
-        thesis = f"Largest modeled stress is {worst['name']} ({worst['portfolioImpactPct']:.2%}); prioritize exposure control."
-    else:
-        thesis = "Risk posture is balanced with no dominant scenario stress."
+    macro_tape = _macro_tape_line(macro)
+    event_tape = _event_tape_line(risk_up_high, risk_down_high, len(radar))
+    positioning_tape = _positioning_tape_line(behavioral, tech_bullish, tech_bearish, tech_oversold, tech_overbought)
 
-    focus = [w["title"] for w in warnings if isinstance(w.get("title"), str)][:3]
-    return {"thesis": thesis, "stance": stance, "focus": focus}
+    if worst:
+        scenario_name = str(worst.get("name") or "stress case")
+        scenario_tape = f"Largest modeled stress remains {scenario_name} ({worst_impact:.2%})."
+    else:
+        scenario_tape = "Scenario engine is neutral with no dominant tail shock."
+
+    thesis = f"{macro_tape} {scenario_tape}"
+    if stance == "risk-off":
+        thesis = f"{scenario_tape} {event_tape}"
+    elif stance == "risk-on":
+        thesis = f"{positioning_tape} {scenario_tape}"
+
+    focus = [w["title"] for w in warnings if isinstance(w.get("title"), str)][:2]
+    for theme in _dominant_themes_from_radar(radar):
+        if theme not in focus:
+            focus.append(theme)
+        if len(focus) >= 3:
+            break
+
+    playbook = _pulse_playbook(behavioral, stance)
+    drivers = _top_signal_drivers(warnings, behavioral, risk, macro)
+    desk_note = " ".join(part for part in (macro_tape, event_tape, positioning_tape, scenario_tape) if part)
+    return {
+        "thesis": thesis[:220],
+        "stance": stance,
+        "focus": focus[:3],
+        "deskNote": desk_note[:520],
+        "macroTape": macro_tape,
+        "eventTape": event_tape,
+        "positioningTape": positioning_tape,
+        "playbook": playbook,
+        "signalDrivers": drivers,
+        "confidence": round(_clamp01(confidence * 0.85 + 0.15), 3),
+        "regimeState": regime_state,
+        "regimePanic": round(regime_panic, 3),
+    }
+
+
+def _macro_tape_line(macro: dict[str, MacroPoint]) -> str:
+    vix = macro.get("VIX")
+    us10y = macro.get("US10Y")
+    dxy = macro.get("DXY")
+    spy = macro.get("SPY")
+    segments: list[str] = []
+    if vix and isinstance(vix.chg_pct_1d, float):
+        segments.append(f"VIX {vix.chg_pct_1d:+.1%}")
+    if us10y and isinstance(us10y.chg_bp_1d, float):
+        segments.append(f"UST10Y {us10y.chg_bp_1d:+.1f}bp")
+    if dxy and isinstance(dxy.chg_pct_1d, float):
+        segments.append(f"DXY {dxy.chg_pct_1d:+.1%}")
+    if spy and isinstance(spy.chg_pct_1d, float):
+        segments.append(f"SPY {spy.chg_pct_1d:+.1%}")
+    if not segments:
+        return "Macro tape is mixed with incomplete cross-asset confirmation."
+    return f"Macro tape: {' · '.join(segments[:4])}."
+
+
+def _event_tape_line(risk_up_high: int, risk_down_high: int, radar_count: int) -> str:
+    if radar_count == 0:
+        return "Headline tape is thin across configured feeds."
+    if risk_up_high >= 2:
+        return f"Event tape is risk-up with {risk_up_high} high-impact negative catalysts."
+    if risk_down_high >= 2:
+        return f"Event tape is supportive with {risk_down_high} high-impact risk-down catalysts."
+    return f"Event tape is balanced with {radar_count} scored headlines."
+
+
+def _positioning_tape_line(
+    behavioral: dict[str, Any],
+    tech_bullish: float | None,
+    tech_bearish: float | None,
+    tech_oversold: float | None,
+    tech_overbought: float | None,
+) -> str:
+    opportunities = behavioral.get("opportunities", []) if isinstance(behavioral, dict) else []
+    exits = behavioral.get("exitSignals", []) if isinstance(behavioral, dict) else []
+    top_opp = opportunities[0] if isinstance(opportunities, list) and opportunities and isinstance(opportunities[0], dict) else None
+    top_exit = exits[0] if isinstance(exits, list) and exits and isinstance(exits[0], dict) else None
+
+    if isinstance(top_opp, dict) and isinstance(top_opp.get("ticker"), str):
+        ticker = str(top_opp["ticker"])
+        reason = str(top_opp.get("signal") or "dislocation")
+        base = f"Positioning favors selective accumulation in {ticker} ({reason})."
+    elif isinstance(top_exit, dict) and isinstance(top_exit.get("ticker"), str):
+        ticker = str(top_exit["ticker"])
+        reason = str(top_exit.get("signal") or "distribution")
+        base = f"Positioning favors trimming strength in {ticker} ({reason})."
+    else:
+        base = "Positioning is neutral with no dominant single-name signal."
+
+    tech_tail = ""
+    if tech_bullish is not None and tech_bearish is not None:
+        tech_tail = f" Technical breadth bull/bear: {tech_bullish:.0%}/{tech_bearish:.0%}."
+    if tech_oversold is not None and tech_overbought is not None:
+        tech_tail += f" Oversold/overbought pressure: {tech_oversold:.0%}/{tech_overbought:.0%}."
+    return f"{base}{tech_tail}"
+
+
+def _pulse_playbook(behavioral: dict[str, Any], stance: str) -> list[str]:
+    out: list[str] = []
+    actions = behavioral.get("portfolioActions", []) if isinstance(behavioral, dict) else []
+    if isinstance(actions, list):
+        for row in actions[:4]:
+            if not isinstance(row, dict):
+                continue
+            ticker = row.get("ticker")
+            action = row.get("action")
+            if isinstance(ticker, str) and isinstance(action, str):
+                out.append(f"{action} {ticker}")
+            if len(out) >= 3:
+                break
+    if not out:
+        if stance == "risk-off":
+            out.append("Reduce concentration and raise hedge coverage")
+        elif stance == "risk-on":
+            out.append("Scale into high-conviction names on controlled pullbacks")
+        else:
+            out.append("Hold neutral beta and rotate only where conviction is high")
+    return out[:3]
+
+
+def _top_signal_drivers(
+    warnings: list[dict[str, str]],
+    behavioral: dict[str, Any],
+    risk: dict[str, float | None],
+    macro: dict[str, MacroPoint],
+) -> list[dict[str, Any]]:
+    drivers: list[dict[str, Any]] = []
+    for row in warnings[:3]:
+        title = row.get("title")
+        reason = row.get("reason")
+        severity = row.get("severity")
+        if isinstance(title, str) and title:
+            drivers.append(
+                {
+                    "label": title,
+                    "severity": severity if severity in {"low", "medium", "high"} else "medium",
+                    "detail": reason if isinstance(reason, str) else "",
+                }
+            )
+
+    predictions = behavioral.get("predictions", {}) if isinstance(behavioral, dict) else {}
+    h5 = predictions.get("horizon5d") if isinstance(predictions, dict) else None
+    downside = _as_float(h5.get("downsideProb")) if isinstance(h5, dict) else None
+    if downside is not None:
+        drivers.append(
+            {
+                "label": "5D Downside Probability",
+                "severity": "high" if downside >= 0.62 else "medium" if downside >= 0.5 else "low",
+                "detail": f"Model-implied downside probability is {downside:.0%}.",
+            }
+        )
+
+    vol = risk.get("vol60d")
+    if isinstance(vol, float):
+        drivers.append(
+            {
+                "label": "Realized Volatility",
+                "severity": "high" if vol >= 0.3 else "medium" if vol >= 0.22 else "low",
+                "detail": f"Portfolio 60d annualized volatility is {vol:.0%}.",
+            }
+        )
+
+    vix = macro.get("VIX")
+    if vix and isinstance(vix.chg_pct_1d, float):
+        drivers.append(
+            {
+                "label": "Volatility Regime Shift",
+                "severity": "high" if vix.chg_pct_1d >= 0.06 else "medium" if vix.chg_pct_1d >= 0.03 else "low",
+                "detail": f"VIX moved {vix.chg_pct_1d:+.1%} versus prior close.",
+            }
+        )
+    return drivers[:5]
+
+
+def _dominant_themes_from_radar(radar: list[dict[str, Any]]) -> list[str]:
+    counts: dict[str, int] = {}
+    for row in radar[:12]:
+        title = row.get("title")
+        if not isinstance(title, str):
+            continue
+        for theme in _headline_themes(title):
+            counts[theme] = counts.get(theme, 0) + 1
+    return [theme.replace("-", " ").title() for theme, _ in sorted(counts.items(), key=lambda item: item[1], reverse=True)[:3]]
+
+
+def _build_theme_board(radar: list[dict[str, Any]], behavioral: dict[str, Any]) -> list[dict[str, Any]]:
+    counts: dict[str, dict[str, float]] = {}
+    for row in radar[:14]:
+        title = row.get("title")
+        if not isinstance(title, str):
+            continue
+        weight = 1.35 if row.get("impact") == "high" else 1.0
+        direction = row.get("direction")
+        for theme in _headline_themes(title):
+            if theme not in counts:
+                counts[theme] = {"weight": 0.0, "riskUp": 0.0, "riskDown": 0.0}
+            counts[theme]["weight"] += weight
+            if direction == "risk-up":
+                counts[theme]["riskUp"] += weight
+            elif direction == "risk-down":
+                counts[theme]["riskDown"] += weight
+
+    ticker_intel = behavioral.get("tickerIntel", []) if isinstance(behavioral, dict) else []
+    if isinstance(ticker_intel, list):
+        for row in ticker_intel:
+            if not isinstance(row, dict):
+                continue
+            base_weight = _as_float(row.get("weight")) or 0.0
+            themes = row.get("themes")
+            if not isinstance(themes, list):
+                continue
+            for theme in themes:
+                if not isinstance(theme, str):
+                    continue
+                if theme not in counts:
+                    counts[theme] = {"weight": 0.0, "riskUp": 0.0, "riskDown": 0.0}
+                counts[theme]["weight"] += 0.4 + base_weight
+
+    board: list[dict[str, Any]] = []
+    for theme, stats in counts.items():
+        risk_up = stats["riskUp"]
+        risk_down = stats["riskDown"]
+        direction = "neutral"
+        if risk_up > risk_down * 1.15:
+            direction = "risk-up"
+        elif risk_down > risk_up * 1.15:
+            direction = "risk-down"
+        board.append(
+            {
+                "theme": theme.replace("-", " ").title(),
+                "intensity": round(_clamp01(stats["weight"] / 5.0), 3),
+                "direction": direction,
+                "confidence": round(_clamp01(0.25 + min(0.6, stats["weight"] / 7.5)), 3),
+            }
+        )
+    board.sort(key=lambda row: (row["intensity"], row["confidence"]), reverse=True)
+    return board[:6]
+
+
+def _technical_summary(ticker_intel: list[dict[str, Any]], tracked_count: int) -> dict[str, Any]:
+    if not ticker_intel or tracked_count <= 0:
+        return {"coverage": 0.0, "bullishShare": 0.0, "bearishShare": 0.0, "oversoldShare": 0.0, "overboughtShare": 0.0}
+
+    covered = 0
+    bullish = 0.0
+    bearish = 0.0
+    oversold = 0.0
+    overbought = 0.0
+    for row in ticker_intel:
+        technical = row.get("technical")
+        if not isinstance(technical, dict):
+            continue
+        covered += 1
+        trend = _as_float(technical.get("trendScore")) or 0.5
+        bullish += max(0.0, trend - 0.5) * 2.0
+        bearish += max(0.0, 0.5 - trend) * 2.0
+        oversold += _as_float(technical.get("oversoldScore")) or 0.0
+        overbought += _as_float(technical.get("overboughtScore")) or 0.0
+    if covered <= 0:
+        return {"coverage": 0.0, "bullishShare": 0.0, "bearishShare": 0.0, "oversoldShare": 0.0, "overboughtShare": 0.0}
+    return {
+        "coverage": round(covered / tracked_count, 3),
+        "bullishShare": round(_clamp01(bullish / covered), 3),
+        "bearishShare": round(_clamp01(bearish / covered), 3),
+        "oversoldShare": round(_clamp01(oversold / covered), 3),
+        "overboughtShare": round(_clamp01(overbought / covered), 3),
+    }
 
 
 def _severity_from_rank(rank: int) -> str:

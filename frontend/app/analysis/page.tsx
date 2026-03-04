@@ -226,11 +226,18 @@ export default function AnalysisPage() {
   const pulseThesis = typeof intelligence?.thesis === "string" ? intelligence.thesis : "";
   const pulseStance = intelligence?.stance === "risk-on" || intelligence?.stance === "risk-off" ? intelligence.stance : "balanced";
   const pulseFocus = asStringArray(intelligence?.focus).slice(0, 3);
+  const pulseDeskNote = typeof intelligence?.deskNote === "string" ? intelligence.deskNote : "";
+  const pulseMacroTape = typeof intelligence?.macroTape === "string" ? intelligence.macroTape : "";
+  const pulseEventTape = typeof intelligence?.eventTape === "string" ? intelligence.eventTape : "";
+  const pulsePositioningTape = typeof intelligence?.positioningTape === "string" ? intelligence.positioningTape : "";
+  const pulsePlaybook = asStringArray(intelligence?.playbook).slice(0, 3);
+  const pulseDrivers = asRecordArray(intelligence?.signalDrivers).slice(0, 4);
 
   const warnings = asRecordArray(signals?.warnings);
   const watchouts = asRecordArray(signals?.watchouts);
   const radar = asRecordArray(signals?.radar);
   const scenarios = asRecordArray(signals?.scenarios);
+  const themeBoard = asRecordArray(signals?.themes);
   const regime = asRecord(signals?.regime);
   const tickerIntel = asRecordArray(signals?.tickerIntel);
   const opportunities = asRecordArray(signals?.opportunities);
@@ -252,6 +259,7 @@ export default function AnalysisPage() {
   const alphaLongBias = asRecordArray(alphaBook?.longBias).slice(0, 5);
   const alphaUnderBias = asRecordArray(alphaBook?.underweightBias).slice(0, 5);
   const submodels = asRecord(signals?.submodels);
+  const technicalSummary = asRecord(signals?.technicalSummary);
   const submodelRows = useMemo(() => {
     if (!submodels) return [] as Array<{ name: string; score: number; confidence: number }>;
     return Object.entries(submodels)
@@ -367,11 +375,28 @@ export default function AnalysisPage() {
             <p className="pulse-text">{pulseThesis}</p>
             <span className={`stance ${pulseStance}`}>{pulseStance.replace("-", " ")}</span>
           </div>
+          {pulseDeskNote && <p className="pulse-note">{pulseDeskNote}</p>}
           {pulseFocus.length > 0 && (
             <div className="pulse-focus">
               {pulseFocus.map((item) => (
                 <span className="chip" key={item}>
                   {item}
+                </span>
+              ))}
+            </div>
+          )}
+          {(pulseMacroTape || pulseEventTape || pulsePositioningTape) && (
+            <div className="pulse-lines">
+              {pulseMacroTape && <div className="pulse-line">{pulseMacroTape}</div>}
+              {pulseEventTape && <div className="pulse-line">{pulseEventTape}</div>}
+              {pulsePositioningTape && <div className="pulse-line">{pulsePositioningTape}</div>}
+            </div>
+          )}
+          {pulsePlaybook.length > 0 && (
+            <div className="pulse-playbook">
+              {pulsePlaybook.map((step) => (
+                <span className="chip" key={step}>
+                  {step}
                 </span>
               ))}
             </div>
@@ -529,6 +554,68 @@ export default function AnalysisPage() {
                         </div>
                       )}
                     </article>
+                  </section>
+
+                  <section className="grid two" style={{ marginTop: 14 }}>
+                    <article className="panel signal-panel">
+                      <h3>Signal Drivers</h3>
+                      {pulseDrivers.length === 0 ? (
+                        <div className="status">Driver narrative unavailable in this run.</div>
+                      ) : (
+                        <div className="signal-list">
+                          {pulseDrivers.map((row, idx) => {
+                            const label = typeof row.label === "string" ? row.label : `Driver ${idx + 1}`;
+                            const detail = typeof row.detail === "string" ? row.detail : "";
+                            const severity = row.severity === "high" || row.severity === "low" ? row.severity : "medium";
+                            return (
+                              <div className="signal-item" key={`${label}-${idx}`}>
+                                <div className="signal-head">
+                                  <strong>{label}</strong>
+                                  <span className={`severity ${severity}`}>{severity}</span>
+                                </div>
+                                {detail && <div className="signal-text">{detail}</div>}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </article>
+
+                    <article className="panel">
+                      <h3>Theme Radar</h3>
+                      {themeBoard.length === 0 ? (
+                        <div className="status">Theme extraction unavailable in this run.</div>
+                      ) : (
+                        <div className="signal-list">
+                          {themeBoard.slice(0, 6).map((row, idx) => {
+                            const theme = typeof row.theme === "string" ? row.theme : `Theme ${idx + 1}`;
+                            const intensity = asNumber(row.intensity);
+                            const confidence = asNumber(row.confidence);
+                            const direction = row.direction === "risk-up" || row.direction === "risk-down" ? row.direction : "neutral";
+                            return (
+                              <div className="signal-item" key={`${theme}-${idx}`}>
+                                <div className="signal-head">
+                                  <strong>{theme}</strong>
+                                  <span className={`dir ${direction}`}>{direction}</span>
+                                </div>
+                                <div className="signal-meta">intensity {pct(intensity)} · confidence {pct(confidence)}</div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </article>
+                  </section>
+
+                  <section className="panel" style={{ marginTop: 14 }}>
+                    <h3>Technical Breadth</h3>
+                    <div className="notes">
+                      <div className="note">Coverage: {pct(asNumber(technicalSummary?.coverage))}</div>
+                      <div className="note">Bullish breadth: {pct(asNumber(technicalSummary?.bullishShare))}</div>
+                      <div className="note">Bearish breadth: {pct(asNumber(technicalSummary?.bearishShare))}</div>
+                      <div className="note">Oversold pressure: {pct(asNumber(technicalSummary?.oversoldShare))}</div>
+                      <div className="note">Overbought pressure: {pct(asNumber(technicalSummary?.overboughtShare))}</div>
+                    </div>
                   </section>
 
                   <section className="grid two" style={{ marginTop: 14 }}>
@@ -875,6 +962,10 @@ export default function AnalysisPage() {
                             <tr>
                               <th>Ticker</th>
                               <th>Action</th>
+                              <th>Tech State</th>
+                              <th>Tech Score</th>
+                              <th>RSI</th>
+                              <th>ADX</th>
                               <th>Value View</th>
                               <th>Val Inputs</th>
                               <th>Fair Value</th>
@@ -896,16 +987,25 @@ export default function AnalysisPage() {
                               const crowding = asNumber(row.crowdingScore);
                               const valuation = asRecord(row.valuation);
                               const openbb = asRecord(row.openbb);
+                              const technical = asRecord(row.technical);
                               const coverage = asRecord(openbb?.coverage);
                               const fairValue = asNumber(valuation?.fairValue);
                               const marginSafety = asNumber(valuation?.marginSafety);
                               const valueView = typeof valuation?.verdict === "string" ? valuation.verdict : "-";
                               const valInputs = asNumber(coverage?.valuationInputs);
+                              const techState = typeof technical?.signalState === "string" ? technical.signalState : "-";
+                              const techScore = asNumber(technical?.technicalScore);
+                              const rsi = asNumber(technical?.rsi14);
+                              const adx = asNumber(technical?.adx14);
                               const themes = asStringArray(row.themes).slice(0, 2).join(", ") || "-";
                               return (
                                 <tr key={`${ticker}-${idx}`}>
                                   <td className="mono">{ticker}</td>
                                   <td>{action}</td>
+                                  <td>{techState}</td>
+                                  <td>{pct(techScore)}</td>
+                                  <td>{rsi === null ? "-" : rsi.toFixed(1)}</td>
+                                  <td>{adx === null ? "-" : adx.toFixed(1)}</td>
                                   <td>{valueView}</td>
                                   <td>{valInputs === null ? "-" : valInputs.toFixed(0)}</td>
                                   <td>{money(fairValue)}</td>
