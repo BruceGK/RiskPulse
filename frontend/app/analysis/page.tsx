@@ -9,6 +9,11 @@ import type { AnalysisResponse, Position } from "@/lib/types";
 const STORAGE_KEY = "riskpulse_positions";
 const UI_PREFS_KEY = "riskpulse_ui_v1";
 const UI_PREFS_MAX_AGE_MS = 1000 * 60 * 60 * 24 * 30;
+const DEMO_SAMPLE: Position[] = [
+  { ticker: "AAPL", qty: 8, asset_type: "stock" },
+  { ticker: "MSFT", qty: 5, asset_type: "stock" },
+  { ticker: "SPY", qty: 6, asset_type: "etf" },
+];
 
 type ViewTab = "overview" | "signals" | "holdings" | "news";
 type RailTab = "macro" | "ticker" | "sec";
@@ -141,6 +146,8 @@ export default function AnalysisPage() {
   const [holdingsView, setHoldingsView] = useState<HoldingsView>("essentials");
   const [expandedTicker, setExpandedTicker] = useState<string | null>(null);
   const [shareStatus, setShareStatus] = useState<"" | "copied" | "failed">("");
+  const [isDemoSeeded, setIsDemoSeeded] = useState(false);
+  const [showDemoBanner, setShowDemoBanner] = useState(false);
   const [prefsHydrated, setPrefsHydrated] = useState(false);
 
   useEffect(() => {
@@ -241,15 +248,19 @@ export default function AnalysisPage() {
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const hasParams = params.toString().length > 0;
+    const cleanQuery = () => {
+      if (!hasParams) return;
+      const cleanUrl = `${window.location.pathname}${window.location.hash}`;
+      window.history.replaceState({}, "", cleanUrl);
+    };
+
     try {
       const shared = decodeSharePayload(params.get("share"));
       if (shared?.positions?.length) {
         setPositions(shared.positions);
         localStorage.setItem(STORAGE_KEY, JSON.stringify(shared.positions));
-        if (hasParams) {
-          const cleanUrl = `${window.location.pathname}${window.location.hash}`;
-          window.history.replaceState({}, "", cleanUrl);
-        }
+        setIsDemoSeeded(false);
+        cleanQuery();
         return;
       }
     } catch {
@@ -258,19 +269,35 @@ export default function AnalysisPage() {
 
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) {
-      setLoading(false);
-      setError("No positions found. Add positions first.");
+      setPositions(DEMO_SAMPLE);
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(DEMO_SAMPLE));
+      setIsDemoSeeded(true);
+      setShowDemoBanner(true);
+      setError("");
+      cleanQuery();
       return;
     }
     try {
-      setPositions(JSON.parse(raw) as Position[]);
-      if (hasParams) {
-        const cleanUrl = `${window.location.pathname}${window.location.hash}`;
-        window.history.replaceState({}, "", cleanUrl);
+      const parsed = normalizePositions(JSON.parse(raw));
+      if (parsed.length > 0) {
+        setPositions(parsed);
+        setIsDemoSeeded(false);
+        cleanQuery();
+        return;
       }
+      setPositions(DEMO_SAMPLE);
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(DEMO_SAMPLE));
+      setIsDemoSeeded(true);
+      setShowDemoBanner(true);
+      setError("");
+      cleanQuery();
     } catch {
-      setLoading(false);
-      setError("Invalid positions payload in local storage.");
+      setPositions(DEMO_SAMPLE);
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(DEMO_SAMPLE));
+      setIsDemoSeeded(true);
+      setShowDemoBanner(true);
+      setError("");
+      cleanQuery();
     }
   }, []);
 
@@ -504,7 +531,7 @@ export default function AnalysisPage() {
           <span className="brand-dot" />
           RiskPulse
         </Link>
-        <div className="hero-meta" style={{ margin: 0 }}>
+        <div className="top-actions">
           <Link href="/portfolio" className="nav-link">
             Edit Portfolio
           </Link>
@@ -516,6 +543,21 @@ export default function AnalysisPage() {
           </button>
         </div>
       </header>
+      {showDemoBanner && isDemoSeeded && (
+        <div className="status onboarding-banner" style={{ marginBottom: 12 }}>
+          <div>
+            <strong>Demo portfolio loaded for first run.</strong> You are seeing the analysis immediately so the risk engine is easier to evaluate.
+          </div>
+          <div className="banner-actions">
+            <Link href="/portfolio" className="btn secondary">
+              Customize Portfolio
+            </Link>
+            <button className="btn secondary" type="button" onClick={() => setShowDemoBanner(false)}>
+              Hide
+            </button>
+          </div>
+        </div>
+      )}
       {shareStatus && (
         <div className={`status ${shareStatus === "failed" ? "error" : ""}`} style={{ marginBottom: 12 }}>
           {shareStatus === "copied"
@@ -597,6 +639,7 @@ export default function AnalysisPage() {
               <div className="kpi-value">{pct(predictionConfidence)}</div>
             </article>
           </section>
+          <p className="helper-text">Fast read: these cards summarize portfolio scale, realized volatility, near-term downside odds, and model confidence.</p>
 
           <section className="section-switcher" style={{ marginTop: 14 }}>
             <button className={`switch-chip ${activeTab === "overview" ? "active" : ""}`} onClick={() => setActiveTab("overview")}>Overview</button>
@@ -665,6 +708,7 @@ export default function AnalysisPage() {
                   <section className="grid two" style={{ marginTop: 14 }}>
                     <article className="panel signal-panel">
                       <h3>Model Reliability Stack</h3>
+                      <p className="helper-text">Confidence reflects data coverage and internal agreement for each model slice.</p>
                       {submodelRows.length === 0 ? (
                         <div className="status">Submodel telemetry unavailable in this run.</div>
                       ) : (
@@ -687,6 +731,7 @@ export default function AnalysisPage() {
 
                     <article className="panel signal-panel">
                       <h3>Construction Engine</h3>
+                      <p className="helper-text">Target weights are model suggestions for balance and risk control, not direct trade instructions.</p>
                       <div className="notes">
                         <div className="note">Projected top holding: {pct(projectedTop1)}</div>
                         <div className="note">Projected turnover: {pct(projectedTurnover)}</div>
@@ -1122,6 +1167,7 @@ export default function AnalysisPage() {
                 <>
                   <section className="panel">
                     <h3>Holdings Intelligence</h3>
+                    <p className="helper-text">Use Essentials for quick decisions. Open row details for rationale, valuation inputs, and technical context.</p>
                     <div className="section-switcher" style={{ marginTop: 10 }}>
                       <button className={`switch-chip ${holdingsView === "essentials" ? "active" : ""}`} onClick={() => setHoldingsView("essentials")}>
                         Essentials

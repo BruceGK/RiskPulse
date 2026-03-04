@@ -65,6 +65,19 @@ a {
   justify-content: space-between;
   margin-bottom: 18px;
   animation: reveal 0.5s ease;
+  gap: 12px;
+}
+
+.top-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.top-actions .btn {
+  min-height: 38px;
 }
 
 .brand {
@@ -888,6 +901,27 @@ tbody tr:hover {
   color: #9b202b;
 }
 
+.onboarding-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.banner-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.helper-text {
+  margin: 8px 2px 2px;
+  color: #607184;
+  font-size: 0.83rem;
+  line-height: 1.35;
+}
+
 .mono {
   font-family: var(--font-mono), monospace;
 }
@@ -953,6 +987,16 @@ tbody tr:hover {
 
   .topbar {
     margin-bottom: 12px;
+  }
+
+  .top-actions {
+    width: 100%;
+    justify-content: flex-start;
+  }
+
+  .onboarding-banner {
+    flex-direction: column;
+    align-items: flex-start;
   }
 
   .hero {
