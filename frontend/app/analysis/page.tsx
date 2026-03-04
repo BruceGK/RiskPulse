@@ -22,6 +22,18 @@ type UiPrefs = {
   savedAt: number;
 };
 
+type SharePayload = {
+  v: 1;
+  ui?: {
+    tab?: ViewTab;
+    rail?: RailTab;
+    holdingsView?: HoldingsView;
+    scenario?: string;
+    shock?: number;
+  };
+  positions?: Position[];
+};
+
 function isViewTab(value: string | null): value is ViewTab {
   return value === "overview" || value === "signals" || value === "holdings" || value === "news";
 }
@@ -68,6 +80,53 @@ function asNumber(value: unknown): number | null {
   return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
 
+function normalizePositions(value: unknown): Position[] {
+  if (!Array.isArray(value)) return [];
+  const out: Position[] = [];
+  for (const item of value) {
+    if (!item || typeof item !== "object" || Array.isArray(item)) continue;
+    const row = item as Record<string, unknown>;
+    const ticker = typeof row.ticker === "string" ? row.ticker.toUpperCase().trim() : "";
+    const qty = typeof row.qty === "number" ? row.qty : Number(row.qty);
+    const assetType = typeof row.asset_type === "string" && row.asset_type.trim() ? row.asset_type.trim() : "stock";
+    if (!ticker || !Number.isFinite(qty) || qty <= 0) continue;
+    out.push({ ticker, qty, asset_type: assetType });
+  }
+  return out;
+}
+
+function encodeSharePayload(payload: SharePayload): string {
+  const json = JSON.stringify(payload);
+  const bytes = new TextEncoder().encode(json);
+  let binary = "";
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  const b64 = btoa(binary);
+  return b64.replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+
+function decodeSharePayload(raw: string | null): SharePayload | null {
+  if (!raw || !raw.trim()) return null;
+  try {
+    const normalized = raw.replace(/-/g, "+").replace(/_/g, "/");
+    const padded = normalized + "=".repeat((4 - (normalized.length % 4 || 4)) % 4);
+    const binary = atob(padded);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i += 1) {
+      bytes[i] = binary.charCodeAt(i);
+    }
+    const json = new TextDecoder().decode(bytes);
+    const parsed = JSON.parse(json) as Partial<SharePayload>;
+    if (!parsed || typeof parsed !== "object" || parsed.v !== 1) return null;
+    return {
+      v: 1,
+      ui: parsed.ui && typeof parsed.ui === "object" ? parsed.ui : undefined,
+      positions: normalizePositions(parsed.positions),
+    };
+  } catch {
+    return null;
+  }
+}
+
 export default function AnalysisPage() {
   const [positions, setPositions] = useState<Position[]>([]);
   const [analysis, setAnalysis] = useState<AnalysisResponse | null>(null);
@@ -81,6 +140,7 @@ export default function AnalysisPage() {
   const [railTab, setRailTab] = useState<RailTab>("macro");
   const [holdingsView, setHoldingsView] = useState<HoldingsView>("essentials");
   const [expandedTicker, setExpandedTicker] = useState<string | null>(null);
+  const [shareStatus, setShareStatus] = useState<"" | "copied" | "failed">("");
   const [prefsHydrated, setPrefsHydrated] = useState(false);
 
   useEffect(() => {
@@ -91,6 +151,32 @@ export default function AnalysisPage() {
     let hasUrlHoldingsView = false;
     try {
       const params = new URLSearchParams(window.location.search);
+      const shared = decodeSharePayload(params.get("share"));
+      if (shared?.ui) {
+        const sharedTab = shared.ui.tab || null;
+        const sharedRail = shared.ui.rail || null;
+        const sharedHoldings = shared.ui.holdingsView || null;
+        if (isViewTab(sharedTab)) {
+          setActiveTab(sharedTab);
+          hasUrlTab = true;
+        }
+        if (isRailTab(sharedRail)) {
+          setRailTab(sharedRail);
+          hasUrlRail = true;
+        }
+        if (isHoldingsView(sharedHoldings)) {
+          setHoldingsView(sharedHoldings);
+          hasUrlHoldingsView = true;
+        }
+        if (typeof shared.ui.scenario === "string" && shared.ui.scenario.trim().length > 0) {
+          setActiveScenario(shared.ui.scenario.trim());
+          hasUrlScenario = true;
+        }
+        if (typeof shared.ui.shock === "number" && Number.isFinite(shared.ui.shock)) {
+          setScenarioScale(Math.min(2, Math.max(0.5, shared.ui.shock)));
+          hasUrlShock = true;
+        }
+      }
       const urlTab = params.get("tab");
       const urlRail = params.get("rail");
       const urlScenario = params.get("scenario");
@@ -153,6 +239,23 @@ export default function AnalysisPage() {
   }, []);
 
   useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const hasParams = params.toString().length > 0;
+    try {
+      const shared = decodeSharePayload(params.get("share"));
+      if (shared?.positions?.length) {
+        setPositions(shared.positions);
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(shared.positions));
+        if (hasParams) {
+          const cleanUrl = `${window.location.pathname}${window.location.hash}`;
+          window.history.replaceState({}, "", cleanUrl);
+        }
+        return;
+      }
+    } catch {
+      // Continue to local storage fallback.
+    }
+
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) {
       setLoading(false);
@@ -161,6 +264,10 @@ export default function AnalysisPage() {
     }
     try {
       setPositions(JSON.parse(raw) as Position[]);
+      if (hasParams) {
+        const cleanUrl = `${window.location.pathname}${window.location.hash}`;
+        window.history.replaceState({}, "", cleanUrl);
+      }
     } catch {
       setLoading(false);
       setError("Invalid positions payload in local storage.");
@@ -339,29 +446,6 @@ export default function AnalysisPage() {
     localStorage.setItem(UI_PREFS_KEY, JSON.stringify(payload));
   }, [activeTab, railTab, holdingsView, activeScenario, scenarioScale, prefsHydrated]);
 
-  useEffect(() => {
-    if (!prefsHydrated) return;
-    const params = new URLSearchParams(window.location.search);
-    params.set("tab", activeTab);
-    params.set("rail", railTab);
-    if (activeScenario) {
-      params.set("scenario", activeScenario);
-    } else {
-      params.delete("scenario");
-    }
-    if (Math.abs(scenarioScale - 1) > 0.001) {
-      params.set("shock", scenarioScale.toFixed(1));
-    } else {
-      params.delete("shock");
-    }
-    params.set("hview", holdingsView);
-    const nextQuery = params.toString();
-    const currentQuery = window.location.search.startsWith("?") ? window.location.search.slice(1) : "";
-    if (nextQuery === currentQuery) return;
-    const nextUrl = `${window.location.pathname}${nextQuery ? `?${nextQuery}` : ""}${window.location.hash}`;
-    window.history.replaceState({}, "", nextUrl);
-  }, [activeTab, railTab, holdingsView, activeScenario, scenarioScale, prefsHydrated]);
-
   const selectedScenario = scenarios.find((row) => row.id === activeScenario) || scenarios[0] || null;
   const scenarioExposed = selectedScenario ? asRecordArray(selectedScenario.exposed) : [];
   const scaledScenarioImpact = selectedScenario ? (asNumber(selectedScenario.portfolioImpactPct) || 0) * scenarioScale : null;
@@ -381,6 +465,38 @@ export default function AnalysisPage() {
     sec: secHeadlines.length,
   };
 
+  useEffect(() => {
+    if (!shareStatus) return;
+    const timer = window.setTimeout(() => setShareStatus(""), 2200);
+    return () => window.clearTimeout(timer);
+  }, [shareStatus]);
+
+  const handleShareView = async () => {
+    const payload: SharePayload = {
+      v: 1,
+      ui: {
+        tab: activeTab,
+        rail: railTab,
+        holdingsView,
+        scenario: activeScenario || undefined,
+        shock: Math.abs(scenarioScale - 1) > 0.001 ? Number(scenarioScale.toFixed(1)) : undefined,
+      },
+      positions: normalizePositions(positions),
+    };
+    const encoded = encodeSharePayload(payload);
+    const url = `${window.location.origin}${window.location.pathname}?share=${encodeURIComponent(encoded)}`;
+    try {
+      if (!navigator.clipboard?.writeText) {
+        throw new Error("Clipboard unavailable");
+      }
+      await navigator.clipboard.writeText(url);
+      setShareStatus("copied");
+    } catch {
+      setShareStatus("failed");
+      window.prompt("Copy this share link:", url);
+    }
+  };
+
   return (
     <main className="container">
       <header className="topbar">
@@ -392,11 +508,21 @@ export default function AnalysisPage() {
           <Link href="/portfolio" className="nav-link">
             Edit Portfolio
           </Link>
+          <button className="btn secondary" onClick={handleShareView} disabled={!positions.length}>
+            Share View
+          </button>
           <button className="btn secondary" onClick={() => setRefreshTick((n) => n + 1)} disabled={loading || !positions.length}>
             {loadPhase === "quick" ? "Loading Quick Pass..." : loadPhase === "full" ? "Hydrating Deep Analysis..." : "Refresh Analysis"}
           </button>
         </div>
       </header>
+      {shareStatus && (
+        <div className={`status ${shareStatus === "failed" ? "error" : ""}`} style={{ marginBottom: 12 }}>
+          {shareStatus === "copied"
+            ? "Share link copied to clipboard."
+            : "Could not access clipboard; manual copy dialog opened."}
+        </div>
+      )}
 
       <section className="hero">
         <h1>Portfolio Risk Overview</h1>
