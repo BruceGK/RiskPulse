@@ -723,7 +723,7 @@ export default function AnalysisPage() {
         <h1>{lossMode ? "LossPulse: Capital Destruction Terminal" : "Portfolio Risk Overview"}</h1>
         <p className="hero-sub">
           {lossMode
-            ? "Optimizing capital destruction with professional-grade bad decisions. Educational parody only."
+            ? "Optimizing capital destruction with professional-grade bad decisions."
             : "Multi-model risk engine with forecast, action book, and instant news context."}
         </p>
         {analysis && (
@@ -732,7 +732,7 @@ export default function AnalysisPage() {
             <span className="pill">Portfolio {money(analysis.portfolio_value)}</span>
             <span className="pill">Top5 {pct(analysis.top_concentration.top5Weight)}</span>
             <span className="pill">Model {typeof modelInfo?.name === "string" ? modelInfo.name : "baseline"}</span>
-            {lossMode && <span className="pill">Parody Mode</span>}
+            {lossMode && <span className="pill">Loss Mode</span>}
           </div>
         )}
       </section>
@@ -799,25 +799,22 @@ export default function AnalysisPage() {
           </section>
           <p className="helper-text">
             {lossMode
-              ? "Satire layer: these scores parody common self-inflicted investor mistakes and are meant for risk education."
+              ? "These scores track how efficiently your setup can self-destruct."
               : "Fast read: these cards summarize portfolio scale, realized volatility, near-term downside odds, and model confidence."}
           </p>
 
           {lossMode && (
             <section className="grid two" style={{ marginTop: 10 }}>
               <article className="panel loss-panel">
-                <h3>Dark Playbook (Do Not Do This)</h3>
+                <h3>Dark Playbook</h3>
                 <div className="notes" style={{ marginTop: 8 }}>
                   {darkPlaybook.map((line) => (
                     <div className="note" key={line}>{line}</div>
                   ))}
                 </div>
-                <div className="status error" style={{ marginTop: 10 }}>
-                  Educational parody. This mode mocks bad behavior so users can avoid it.
-                </div>
               </article>
               <article className="panel loss-panel">
-                <h3>Loss Leaderboard (Fake)</h3>
+                <h3>Loss Leaderboard</h3>
                 <div className="table-wrap" style={{ marginTop: 8 }}>
                   <table>
                     <thead>
@@ -865,9 +862,6 @@ export default function AnalysisPage() {
               ? (lossMode ? "Chaos View reveals every overfit signal you can misuse with confidence." : "Pro View shows full model internals and diagnostics.")
               : (lossMode ? "Panic View hides nuance so you can react emotionally at max speed." : "Focus View highlights core decisions and hides secondary diagnostics.")}
           </p>
-          {lossMode && (
-            <p className="helper-text">LossPulse is satire: dark humor layered on real data to teach risk discipline.</p>
-          )}
 
           <section className="analysis-shell" style={{ marginTop: 14 }}>
             <div className="analysis-main">

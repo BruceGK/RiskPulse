@@ -97,7 +97,7 @@ export default function PortfolioPage() {
         <h1>{lossMode ? "Build your bag and optimize regret." : "Build your portfolio inputs and launch the risk engine."}</h1>
         <p className="hero-sub">
           {lossMode
-            ? "Flip to parody mode for dark-humor coaching on bad habits, then open analysis to see the satire layer on real market data."
+            ? "Flip to LossPulse and route your portfolio through pure chaos analytics."
             : "Enter symbols, set quantities, and run a single API-driven pass for concentration, macro context, and headline risk."}
         </p>
         <div className="hero-meta">
@@ -168,7 +168,7 @@ export default function PortfolioPage() {
                 ? "Data is stored in browser local storage so your bad ideas survive refresh."
                 : "Data is stored in browser local storage for quick iteration."}
             </div>
-            {lossMode && <div className="note">Parody mode is satire: humor with real data for risk-awareness training.</div>}
+            {lossMode && <div className="note">Zero guardrails mode enabled. Confidence optional.</div>}
           </div>
           <div className="hero-meta" style={{ marginTop: 14 }}>
             <button className="btn primary" onClick={() => router.push("/analysis")} disabled={positions.length === 0}>
