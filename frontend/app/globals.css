@@ -1061,6 +1061,66 @@ tbody tr:hover {
   color: #ffdbe9;
 }
 
+.container.losspulse .chip {
+  background: #2f2640;
+  border-color: #4c3c65;
+  color: #efe6fd;
+}
+
+.container.losspulse .status {
+  background: #2a2239;
+  border-color: #4a3a65;
+  color: #f0e9fd;
+}
+
+.container.losspulse .status.error {
+  background: #492a38;
+  border-color: #7a445a;
+  color: #ffdbe8;
+}
+
+.container.losspulse .severity.high {
+  border-color: #86506a;
+  background: #552f41;
+  color: #ffd7e5;
+}
+
+.container.losspulse .severity.medium {
+  border-color: #8a7342;
+  background: #584726;
+  color: #ffe8ba;
+}
+
+.container.losspulse .severity.low {
+  border-color: #3f755e;
+  background: #254637;
+  color: #cbf5e1;
+}
+
+.container.losspulse .dir {
+  border-color: #54416f;
+  background: #322845;
+  color: #d9cbf0;
+}
+
+.container.losspulse .dir.risk-up {
+  border-color: #8c536e;
+  background: #5a3143;
+  color: #ffd8e7;
+}
+
+.container.losspulse .dir.risk-down {
+  border-color: #3f755e;
+  background: #244437;
+  color: #cff7e3;
+}
+
+.container.losspulse .dir.neutral {
+  border-color: #4f5d73;
+  background: #2f3746;
+  color: #d5deee;
+}
+
 .container.losspulse .note,
 .container.losspulse .headline,
 .container.losspulse .signal-item,
@@ -1070,6 +1130,10 @@ tbody tr:hover {
   background: #241e30;
   border-color: #3a304b;
   color: #f0ebf8;
+}
+
+.container.losspulse .note {
+  border-left-color: #705f8f;
 }
 
 .container.losspulse .table-wrap {
