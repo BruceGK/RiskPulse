@@ -18,10 +18,12 @@ const DEMO_SAMPLE: Position[] = [
 type ViewTab = "overview" | "signals" | "holdings" | "news";
 type RailTab = "macro" | "ticker" | "sec";
 type HoldingsView = "essentials" | "quant" | "full";
+type LayoutMode = "focus" | "pro";
 type UiPrefs = {
   activeTab: ViewTab;
   railTab: RailTab;
   holdingsView: HoldingsView;
+  layoutMode: LayoutMode;
   activeScenario: string;
   scenarioScale: number;
   savedAt: number;
@@ -33,6 +35,7 @@ type SharePayload = {
     tab?: ViewTab;
     rail?: RailTab;
     holdingsView?: HoldingsView;
+    layout?: LayoutMode;
     scenario?: string;
     shock?: number;
   };
@@ -49,6 +52,10 @@ function isRailTab(value: string | null): value is RailTab {
 
 function isHoldingsView(value: string | null): value is HoldingsView {
   return value === "essentials" || value === "quant" || value === "full";
+}
+
+function isLayoutMode(value: string | null): value is LayoutMode {
+  return value === "focus" || value === "pro";
 }
 
 function pct(value: number | null | undefined): string {
@@ -144,6 +151,7 @@ export default function AnalysisPage() {
   const [activeTab, setActiveTab] = useState<ViewTab>("overview");
   const [railTab, setRailTab] = useState<RailTab>("macro");
   const [holdingsView, setHoldingsView] = useState<HoldingsView>("essentials");
+  const [layoutMode, setLayoutMode] = useState<LayoutMode>("focus");
   const [expandedTicker, setExpandedTicker] = useState<string | null>(null);
   const [shareStatus, setShareStatus] = useState<"" | "copied" | "failed">("");
   const [isDemoSeeded, setIsDemoSeeded] = useState(false);
@@ -156,6 +164,7 @@ export default function AnalysisPage() {
     let hasUrlScenario = false;
     let hasUrlShock = false;
     let hasUrlHoldingsView = false;
+    let hasUrlLayout = false;
     try {
       const params = new URLSearchParams(window.location.search);
       const shared = decodeSharePayload(params.get("share"));
@@ -163,6 +172,7 @@ export default function AnalysisPage() {
         const sharedTab = shared.ui.tab || null;
         const sharedRail = shared.ui.rail || null;
         const sharedHoldings = shared.ui.holdingsView || null;
+        const sharedLayout = shared.ui.layout || null;
         if (isViewTab(sharedTab)) {
           setActiveTab(sharedTab);
           hasUrlTab = true;
@@ -174,6 +184,10 @@ export default function AnalysisPage() {
         if (isHoldingsView(sharedHoldings)) {
           setHoldingsView(sharedHoldings);
           hasUrlHoldingsView = true;
+        }
+        if (isLayoutMode(sharedLayout)) {
+          setLayoutMode(sharedLayout);
+          hasUrlLayout = true;
         }
         if (typeof shared.ui.scenario === "string" && shared.ui.scenario.trim().length > 0) {
           setActiveScenario(shared.ui.scenario.trim());
@@ -189,6 +203,7 @@ export default function AnalysisPage() {
       const urlScenario = params.get("scenario");
       const urlShock = params.get("shock");
       const urlHoldingsView = params.get("hview");
+      const urlLayout = params.get("view");
       if (isViewTab(urlTab)) {
         setActiveTab(urlTab);
         hasUrlTab = true;
@@ -212,6 +227,10 @@ export default function AnalysisPage() {
         setHoldingsView(urlHoldingsView);
         hasUrlHoldingsView = true;
       }
+      if (isLayoutMode(urlLayout)) {
+        setLayoutMode(urlLayout);
+        hasUrlLayout = true;
+      }
     } catch {
       // Ignore malformed URL params and continue with persisted preferences.
     }
@@ -231,9 +250,11 @@ export default function AnalysisPage() {
       const savedTab = typeof prefs.activeTab === "string" ? prefs.activeTab : null;
       const savedRail = typeof prefs.railTab === "string" ? prefs.railTab : null;
       const savedHoldingsView = typeof prefs.holdingsView === "string" ? prefs.holdingsView : null;
+      const savedLayoutMode = typeof prefs.layoutMode === "string" ? prefs.layoutMode : null;
       if (!hasUrlTab && isViewTab(savedTab)) setActiveTab(savedTab);
       if (!hasUrlRail && isRailTab(savedRail)) setRailTab(savedRail);
       if (!hasUrlHoldingsView && isHoldingsView(savedHoldingsView)) setHoldingsView(savedHoldingsView);
+      if (!hasUrlLayout && isLayoutMode(savedLayoutMode)) setLayoutMode(savedLayoutMode);
       if (!hasUrlScenario && typeof prefs.activeScenario === "string") setActiveScenario(prefs.activeScenario);
       if (!hasUrlShock && typeof prefs.scenarioScale === "number" && Number.isFinite(prefs.scenarioScale)) {
         setScenarioScale(Math.min(2, Math.max(0.5, prefs.scenarioScale)));
@@ -418,8 +439,10 @@ export default function AnalysisPage() {
   const macroContextReleases = asRecordArray(macroContext?.releaseHighlights).slice(0, 4);
   const macroContextEvents = asRecordArray(macroContext?.eventReadthrough).slice(0, 4);
   const macroContextImplications = asStringArray(macroContext?.portfolioImplications).slice(0, 4);
+  const isProView = layoutMode === "pro";
+  const effectiveHoldingsView: HoldingsView = isProView ? holdingsView : "essentials";
   const holdingsColSpan =
-    holdingsView === "full" ? 15 : holdingsView === "quant" ? 9 : 8;
+    effectiveHoldingsView === "full" ? 15 : effectiveHoldingsView === "quant" ? 9 : 8;
 
   const convictionLabel = (row: Record<string, unknown>) => {
     const confidence = asNumber(row.confidence) || 0;
@@ -474,12 +497,13 @@ export default function AnalysisPage() {
       activeTab,
       railTab,
       holdingsView,
+      layoutMode,
       activeScenario,
       scenarioScale,
       savedAt: Date.now(),
     };
     localStorage.setItem(UI_PREFS_KEY, JSON.stringify(payload));
-  }, [activeTab, railTab, holdingsView, activeScenario, scenarioScale, prefsHydrated]);
+  }, [activeTab, railTab, holdingsView, layoutMode, activeScenario, scenarioScale, prefsHydrated]);
 
   const selectedScenario = scenarios.find((row) => row.id === activeScenario) || scenarios[0] || null;
   const scenarioExposed = selectedScenario ? asRecordArray(selectedScenario.exposed) : [];
@@ -513,6 +537,7 @@ export default function AnalysisPage() {
         tab: activeTab,
         rail: railTab,
         holdingsView,
+        layout: layoutMode,
         scenario: activeScenario || undefined,
         shock: Math.abs(scenarioScale - 1) > 0.001 ? Number(scenarioScale.toFixed(1)) : undefined,
       },
@@ -654,7 +679,16 @@ export default function AnalysisPage() {
             <button className={`switch-chip ${activeTab === "signals" ? "active" : ""}`} onClick={() => setActiveTab("signals")}>Signals</button>
             <button className={`switch-chip ${activeTab === "holdings" ? "active" : ""}`} onClick={() => setActiveTab("holdings")}>Holdings</button>
             <button className={`switch-chip ${activeTab === "news" ? "active" : ""}`} onClick={() => setActiveTab("news")}>News</button>
+            <div className="mode-switch">
+              <button className={`switch-chip ${layoutMode === "focus" ? "active" : ""}`} onClick={() => setLayoutMode("focus")}>Focus View</button>
+              <button className={`switch-chip ${layoutMode === "pro" ? "active" : ""}`} onClick={() => setLayoutMode("pro")}>Pro View</button>
+            </div>
           </section>
+          <p className="helper-text">
+            {isProView
+              ? "Pro View shows full model internals and diagnostics."
+              : "Focus View highlights core decisions and hides secondary diagnostics."}
+          </p>
 
           <section className="analysis-shell" style={{ marginTop: 14 }}>
             <div className="analysis-main">
@@ -713,132 +747,138 @@ export default function AnalysisPage() {
                     </article>
                   </section>
 
-                  <section className="grid two" style={{ marginTop: 14 }}>
-                    <article className="panel signal-panel">
-                      <h3>Model Reliability Stack</h3>
-                      <p className="helper-text">Confidence reflects data coverage and internal agreement for each model slice.</p>
-                      {submodelRows.length === 0 ? (
-                        <div className="status">Submodel telemetry unavailable in this run.</div>
-                      ) : (
-                        <div className="signal-list">
-                          {submodelRows.map((row) => (
-                            <div className="signal-item" key={row.name}>
-                              <div className="signal-head">
-                                <strong>{row.name}</strong>
-                                <span className="severity medium">conf {pct(row.confidence)}</span>
+                  {isProView && (
+                    <section className="grid two" style={{ marginTop: 14 }}>
+                      <article className="panel signal-panel">
+                        <h3>Model Reliability Stack</h3>
+                        <p className="helper-text">Confidence reflects data coverage and internal agreement for each model slice.</p>
+                        {submodelRows.length === 0 ? (
+                          <div className="status">Submodel telemetry unavailable in this run.</div>
+                        ) : (
+                          <div className="signal-list">
+                            {submodelRows.map((row) => (
+                              <div className="signal-item" key={row.name}>
+                                <div className="signal-head">
+                                  <strong>{row.name}</strong>
+                                  <span className="severity medium">conf {pct(row.confidence)}</span>
+                                </div>
+                                <div className="signal-meta">model score {pct(row.score)}</div>
+                                <div className="meter-track">
+                                  <div className="meter-fill" style={{ width: `${Math.max(4, Math.min(100, row.confidence * 100))}%` }} />
+                                </div>
                               </div>
-                              <div className="signal-meta">model score {pct(row.score)}</div>
-                              <div className="meter-track">
-                                <div className="meter-fill" style={{ width: `${Math.max(4, Math.min(100, row.confidence * 100))}%` }} />
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-                      )}
-                    </article>
+                            ))}
+                          </div>
+                        )}
+                      </article>
 
-                    <article className="panel signal-panel">
-                      <h3>Construction Engine</h3>
-                      <p className="helper-text">Target weights are model suggestions for balance and risk control, not direct trade instructions.</p>
+                      <article className="panel signal-panel">
+                        <h3>Construction Engine</h3>
+                        <p className="helper-text">Target weights are model suggestions for balance and risk control, not direct trade instructions.</p>
+                        <div className="notes">
+                          <div className="note">Projected top holding: {pct(projectedTop1)}</div>
+                          <div className="note">Projected turnover: {pct(projectedTurnover)}</div>
+                          <div className="note">Cash buffer: {pct(cashBuffer)}</div>
+                        </div>
+                        {constructionTargets.length > 0 && (
+                          <div className="table-wrap" style={{ marginTop: 10 }}>
+                            <table>
+                              <thead>
+                                <tr>
+                                  <th>Ticker</th>
+                                  <th>Current</th>
+                                  <th>Target</th>
+                                  <th>Delta</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {constructionTargets.map((row, idx) => {
+                                  const ticker = typeof row.ticker === "string" ? row.ticker : `T${idx + 1}`;
+                                  const current = asNumber(row.currentWeight);
+                                  const target = asNumber(row.targetWeight);
+                                  const delta = asNumber(row.delta);
+                                  return (
+                                    <tr key={`${ticker}-${idx}`}>
+                                      <td className="mono">{ticker}</td>
+                                      <td>{pct(current)}</td>
+                                      <td>{pct(target)}</td>
+                                      <td className={delta !== null && delta < 0 ? "neg" : "pos"}>{pct(delta)}</td>
+                                    </tr>
+                                  );
+                                })}
+                              </tbody>
+                            </table>
+                          </div>
+                        )}
+                      </article>
+                    </section>
+                  )}
+
+                  {isProView && (
+                    <section className="grid two" style={{ marginTop: 14 }}>
+                      <article className="panel signal-panel">
+                        <h3>Signal Drivers</h3>
+                        {pulseDrivers.length === 0 ? (
+                          <div className="status">Driver narrative unavailable in this run.</div>
+                        ) : (
+                          <div className="signal-list">
+                            {pulseDrivers.map((row, idx) => {
+                              const label = typeof row.label === "string" ? row.label : `Driver ${idx + 1}`;
+                              const detail = typeof row.detail === "string" ? row.detail : "";
+                              const severity = row.severity === "high" || row.severity === "low" ? row.severity : "medium";
+                              return (
+                                <div className="signal-item" key={`${label}-${idx}`}>
+                                  <div className="signal-head">
+                                    <strong>{label}</strong>
+                                    <span className={`severity ${severity}`}>{severity}</span>
+                                  </div>
+                                  {detail && <div className="signal-text">{detail}</div>}
+                                </div>
+                              );
+                            })}
+                          </div>
+                        )}
+                      </article>
+
+                      <article className="panel">
+                        <h3>Theme Radar</h3>
+                        {themeBoard.length === 0 ? (
+                          <div className="status">Theme extraction unavailable in this run.</div>
+                        ) : (
+                          <div className="signal-list">
+                            {themeBoard.slice(0, 6).map((row, idx) => {
+                              const theme = typeof row.theme === "string" ? row.theme : `Theme ${idx + 1}`;
+                              const intensity = asNumber(row.intensity);
+                              const confidence = asNumber(row.confidence);
+                              const direction = row.direction === "risk-up" || row.direction === "risk-down" ? row.direction : "neutral";
+                              return (
+                                <div className="signal-item" key={`${theme}-${idx}`}>
+                                  <div className="signal-head">
+                                    <strong>{theme}</strong>
+                                    <span className={`dir ${direction}`}>{direction}</span>
+                                  </div>
+                                  <div className="signal-meta">intensity {pct(intensity)} · confidence {pct(confidence)}</div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        )}
+                      </article>
+                    </section>
+                  )}
+
+                  {isProView && (
+                    <section className="panel" style={{ marginTop: 14 }}>
+                      <h3>Technical Breadth</h3>
                       <div className="notes">
-                        <div className="note">Projected top holding: {pct(projectedTop1)}</div>
-                        <div className="note">Projected turnover: {pct(projectedTurnover)}</div>
-                        <div className="note">Cash buffer: {pct(cashBuffer)}</div>
+                        <div className="note">Coverage: {pct(asNumber(technicalSummary?.coverage))}</div>
+                        <div className="note">Bullish breadth: {pct(asNumber(technicalSummary?.bullishShare))}</div>
+                        <div className="note">Bearish breadth: {pct(asNumber(technicalSummary?.bearishShare))}</div>
+                        <div className="note">Oversold pressure: {pct(asNumber(technicalSummary?.oversoldShare))}</div>
+                        <div className="note">Overbought pressure: {pct(asNumber(technicalSummary?.overboughtShare))}</div>
                       </div>
-                      {constructionTargets.length > 0 && (
-                        <div className="table-wrap" style={{ marginTop: 10 }}>
-                          <table>
-                            <thead>
-                              <tr>
-                                <th>Ticker</th>
-                                <th>Current</th>
-                                <th>Target</th>
-                                <th>Delta</th>
-                              </tr>
-                            </thead>
-                            <tbody>
-                              {constructionTargets.map((row, idx) => {
-                                const ticker = typeof row.ticker === "string" ? row.ticker : `T${idx + 1}`;
-                                const current = asNumber(row.currentWeight);
-                                const target = asNumber(row.targetWeight);
-                                const delta = asNumber(row.delta);
-                                return (
-                                  <tr key={`${ticker}-${idx}`}>
-                                    <td className="mono">{ticker}</td>
-                                    <td>{pct(current)}</td>
-                                    <td>{pct(target)}</td>
-                                    <td className={delta !== null && delta < 0 ? "neg" : "pos"}>{pct(delta)}</td>
-                                  </tr>
-                                );
-                              })}
-                            </tbody>
-                          </table>
-                        </div>
-                      )}
-                    </article>
-                  </section>
-
-                  <section className="grid two" style={{ marginTop: 14 }}>
-                    <article className="panel signal-panel">
-                      <h3>Signal Drivers</h3>
-                      {pulseDrivers.length === 0 ? (
-                        <div className="status">Driver narrative unavailable in this run.</div>
-                      ) : (
-                        <div className="signal-list">
-                          {pulseDrivers.map((row, idx) => {
-                            const label = typeof row.label === "string" ? row.label : `Driver ${idx + 1}`;
-                            const detail = typeof row.detail === "string" ? row.detail : "";
-                            const severity = row.severity === "high" || row.severity === "low" ? row.severity : "medium";
-                            return (
-                              <div className="signal-item" key={`${label}-${idx}`}>
-                                <div className="signal-head">
-                                  <strong>{label}</strong>
-                                  <span className={`severity ${severity}`}>{severity}</span>
-                                </div>
-                                {detail && <div className="signal-text">{detail}</div>}
-                              </div>
-                            );
-                          })}
-                        </div>
-                      )}
-                    </article>
-
-                    <article className="panel">
-                      <h3>Theme Radar</h3>
-                      {themeBoard.length === 0 ? (
-                        <div className="status">Theme extraction unavailable in this run.</div>
-                      ) : (
-                        <div className="signal-list">
-                          {themeBoard.slice(0, 6).map((row, idx) => {
-                            const theme = typeof row.theme === "string" ? row.theme : `Theme ${idx + 1}`;
-                            const intensity = asNumber(row.intensity);
-                            const confidence = asNumber(row.confidence);
-                            const direction = row.direction === "risk-up" || row.direction === "risk-down" ? row.direction : "neutral";
-                            return (
-                              <div className="signal-item" key={`${theme}-${idx}`}>
-                                <div className="signal-head">
-                                  <strong>{theme}</strong>
-                                  <span className={`dir ${direction}`}>{direction}</span>
-                                </div>
-                                <div className="signal-meta">intensity {pct(intensity)} · confidence {pct(confidence)}</div>
-                              </div>
-                            );
-                          })}
-                        </div>
-                      )}
-                    </article>
-                  </section>
-
-                  <section className="panel" style={{ marginTop: 14 }}>
-                    <h3>Technical Breadth</h3>
-                    <div className="notes">
-                      <div className="note">Coverage: {pct(asNumber(technicalSummary?.coverage))}</div>
-                      <div className="note">Bullish breadth: {pct(asNumber(technicalSummary?.bullishShare))}</div>
-                      <div className="note">Bearish breadth: {pct(asNumber(technicalSummary?.bearishShare))}</div>
-                      <div className="note">Oversold pressure: {pct(asNumber(technicalSummary?.oversoldShare))}</div>
-                      <div className="note">Overbought pressure: {pct(asNumber(technicalSummary?.overboughtShare))}</div>
-                    </div>
-                  </section>
+                    </section>
+                  )}
 
                   <section className="grid two" style={{ marginTop: 14 }}>
                     <article className="panel">
@@ -954,16 +994,18 @@ export default function AnalysisPage() {
                     </article>
                   </section>
 
-                  <section className="panel" style={{ marginTop: 14 }}>
-                      <h3>Model Notes</h3>
-                      <div className="notes">
-                        {analysis.notes.map((note) => (
-                          <div className="note" key={note}>
-                            {note}
-                          </div>
-                        ))}
-                      </div>
-                  </section>
+                  {isProView && (
+                    <section className="panel" style={{ marginTop: 14 }}>
+                        <h3>Model Notes</h3>
+                        <div className="notes">
+                          {analysis.notes.map((note) => (
+                            <div className="note" key={note}>
+                              {note}
+                            </div>
+                          ))}
+                        </div>
+                    </section>
+                  )}
                 </>
               )}
 
@@ -1122,136 +1164,140 @@ export default function AnalysisPage() {
                     </article>
                   </section>
 
-                  <section className="grid two" style={{ marginTop: 14 }}>
-                    <article className="panel">
-                      <h3>Scenario Lens</h3>
-                      <div className="scenario-tabs">
-                        {scenarios.map((row) => {
-                          const id = typeof row.id === "string" ? row.id : "";
-                          const name = typeof row.name === "string" ? row.name : id;
-                          if (!id) return null;
-                          return (
-                            <button
-                              key={id}
-                              className={`scenario-tab ${id === activeScenario ? "active" : ""}`}
-                              onClick={() => setActiveScenario(id)}
-                              type="button"
-                            >
-                              {name}
-                            </button>
-                          );
-                        })}
-                      </div>
-                      {selectedScenario ? (
-                        <div className="scenario-body">
-                          <div className="slider-row">
-                            <label htmlFor="scenario-scale">Shock Intensity</label>
-                            <input
-                              id="scenario-scale"
-                              type="range"
-                              min={0.5}
-                              max={2}
-                              step={0.1}
-                              value={scenarioScale}
-                              onChange={(e) => setScenarioScale(Number(e.target.value))}
-                            />
-                            <span>{scenarioScale.toFixed(1)}x</span>
-                          </div>
-                          <div className="scenario-metrics">
-                            <div>
-                              <div className="kpi-label">Shock</div>
-                              <div>{typeof selectedScenario.shock === "string" ? selectedScenario.shock : "-"}</div>
-                            </div>
-                            <div>
-                              <div className="kpi-label">Estimated Portfolio Impact</div>
-                              <div className={`scenario-impact ${(scaledScenarioImpact || 0) < 0 ? "neg" : "pos"}`}>{pct(scaledScenarioImpact)}</div>
-                            </div>
-                          </div>
-                          <div className="notes" style={{ marginTop: 10 }}>
-                            {scenarioExposed.map((row) => {
-                              const ticker = typeof row.ticker === "string" ? row.ticker : "-";
-                              const weight = asNumber(row.weight);
-                              const sens = asNumber(row.sensitivity);
+                  {isProView && (
+                    <>
+                      <section className="grid two" style={{ marginTop: 14 }}>
+                        <article className="panel">
+                          <h3>Scenario Lens</h3>
+                          <div className="scenario-tabs">
+                            {scenarios.map((row) => {
+                              const id = typeof row.id === "string" ? row.id : "";
+                              const name = typeof row.name === "string" ? row.name : id;
+                              if (!id) return null;
                               return (
-                                <div className="note" key={`${activeScenario}-${ticker}`}>
-                                  <strong>{ticker}</strong> weight {pct(weight)} · sensitivity {sens?.toFixed(2) ?? "-"}
-                                </div>
+                                <button
+                                  key={id}
+                                  className={`scenario-tab ${id === activeScenario ? "active" : ""}`}
+                                  onClick={() => setActiveScenario(id)}
+                                  type="button"
+                                >
+                                  {name}
+                                </button>
                               );
                             })}
                           </div>
-                        </div>
-                      ) : (
-                        <div className="status" style={{ marginTop: 8 }}>
-                          Scenario engine unavailable for this run.
-                        </div>
-                      )}
-                    </article>
-
-                    <article className="panel">
-                      <h3>Position Watchouts</h3>
-                      {watchouts.length === 0 ? (
-                        <div className="status">No watchouts available in this run.</div>
-                      ) : (
-                        <div className="watchout-list">
-                          {watchouts.map((row, idx) => {
-                            const ticker = typeof row.ticker === "string" ? row.ticker : "-";
-                            const severity = row.severity === "high" || row.severity === "low" ? row.severity : "medium";
-                            const text = typeof row.text === "string" ? row.text : "";
-                            return (
-                              <div className={`watchout-item ${severity}`} key={`${ticker}-${idx}`}>
-                                <div className="warning-head">
-                                  <strong>{ticker}</strong>
-                                  <span className={`severity ${severity}`}>{severity}</span>
+                          {selectedScenario ? (
+                            <div className="scenario-body">
+                              <div className="slider-row">
+                                <label htmlFor="scenario-scale">Shock Intensity</label>
+                                <input
+                                  id="scenario-scale"
+                                  type="range"
+                                  min={0.5}
+                                  max={2}
+                                  step={0.1}
+                                  value={scenarioScale}
+                                  onChange={(e) => setScenarioScale(Number(e.target.value))}
+                                />
+                                <span>{scenarioScale.toFixed(1)}x</span>
+                              </div>
+                              <div className="scenario-metrics">
+                                <div>
+                                  <div className="kpi-label">Shock</div>
+                                  <div>{typeof selectedScenario.shock === "string" ? selectedScenario.shock : "-"}</div>
                                 </div>
-                                <div className="watchout-text">{text}</div>
+                                <div>
+                                  <div className="kpi-label">Estimated Portfolio Impact</div>
+                                  <div className={`scenario-impact ${(scaledScenarioImpact || 0) < 0 ? "neg" : "pos"}`}>{pct(scaledScenarioImpact)}</div>
+                                </div>
                               </div>
-                            );
-                          })}
-                        </div>
-                      )}
-                    </article>
-                  </section>
+                              <div className="notes" style={{ marginTop: 10 }}>
+                                {scenarioExposed.map((row) => {
+                                  const ticker = typeof row.ticker === "string" ? row.ticker : "-";
+                                  const weight = asNumber(row.weight);
+                                  const sens = asNumber(row.sensitivity);
+                                  return (
+                                    <div className="note" key={`${activeScenario}-${ticker}`}>
+                                      <strong>{ticker}</strong> weight {pct(weight)} · sensitivity {sens?.toFixed(2) ?? "-"}
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            </div>
+                          ) : (
+                            <div className="status" style={{ marginTop: 8 }}>
+                              Scenario engine unavailable for this run.
+                            </div>
+                          )}
+                        </article>
 
-                  <section className="panel" style={{ marginTop: 14 }}>
-                    <h3>Headline Impact Radar</h3>
-                    {radar.length === 0 ? (
-                      <div className="status" style={{ marginTop: 8 }}>
-                        Headline scoring unavailable in this run.
-                      </div>
-                    ) : (
-                      <div className="headlines radar-list" style={{ marginTop: 8 }}>
-                        {radar.map((row, idx) => {
-                          const title = typeof row.title === "string" ? row.title : "";
-                          const source = typeof row.source === "string" ? row.source : "Signal";
-                          const url = typeof row.url === "string" ? row.url : "";
-                          const publishedAt = typeof row.publishedAt === "string" ? row.publishedAt : "";
-                          const impact = row.impact === "high" || row.impact === "low" ? row.impact : "medium";
-                          const direction = row.direction === "risk-up" || row.direction === "risk-down" ? row.direction : "neutral";
-                          const horizon = row.horizon === "intraday" || row.horizon === "1m" ? row.horizon : "1w";
-                          const related = asStringArray(row.relatedTickers);
-                          return (
-                            <a className="headline radar-item" key={`${title}-${idx}`} href={url || "#"} target={url ? "_blank" : undefined} rel={url ? "noreferrer" : undefined}>
-                              <div className="radar-tags">
-                                <span className={`severity ${impact}`}>{impact}</span>
-                                <span className={`dir ${direction}`}>{direction}</span>
-                                <span className="chip">{horizon}</span>
-                                {related.map((ticker) => (
-                                  <span className="chip" key={`${title}-${ticker}`}>
-                                    {ticker}
-                                  </span>
-                                ))}
-                              </div>
-                              <div className="headline-title">{title}</div>
-                              <div className="headline-meta">
-                                {source}
-                                {publishedAt ? ` · ${publishedAt.slice(0, 16)}` : ""}
-                              </div>
-                            </a>
-                          );
-                        })}
-                      </div>
-                    )}
-                  </section>
+                        <article className="panel">
+                          <h3>Position Watchouts</h3>
+                          {watchouts.length === 0 ? (
+                            <div className="status">No watchouts available in this run.</div>
+                          ) : (
+                            <div className="watchout-list">
+                              {watchouts.map((row, idx) => {
+                                const ticker = typeof row.ticker === "string" ? row.ticker : "-";
+                                const severity = row.severity === "high" || row.severity === "low" ? row.severity : "medium";
+                                const text = typeof row.text === "string" ? row.text : "";
+                                return (
+                                  <div className={`watchout-item ${severity}`} key={`${ticker}-${idx}`}>
+                                    <div className="warning-head">
+                                      <strong>{ticker}</strong>
+                                      <span className={`severity ${severity}`}>{severity}</span>
+                                    </div>
+                                    <div className="watchout-text">{text}</div>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          )}
+                        </article>
+                      </section>
+
+                      <section className="panel" style={{ marginTop: 14 }}>
+                        <h3>Headline Impact Radar</h3>
+                        {radar.length === 0 ? (
+                          <div className="status" style={{ marginTop: 8 }}>
+                            Headline scoring unavailable in this run.
+                          </div>
+                        ) : (
+                          <div className="headlines radar-list" style={{ marginTop: 8 }}>
+                            {radar.map((row, idx) => {
+                              const title = typeof row.title === "string" ? row.title : "";
+                              const source = typeof row.source === "string" ? row.source : "Signal";
+                              const url = typeof row.url === "string" ? row.url : "";
+                              const publishedAt = typeof row.publishedAt === "string" ? row.publishedAt : "";
+                              const impact = row.impact === "high" || row.impact === "low" ? row.impact : "medium";
+                              const direction = row.direction === "risk-up" || row.direction === "risk-down" ? row.direction : "neutral";
+                              const horizon = row.horizon === "intraday" || row.horizon === "1m" ? row.horizon : "1w";
+                              const related = asStringArray(row.relatedTickers);
+                              return (
+                                <a className="headline radar-item" key={`${title}-${idx}`} href={url || "#"} target={url ? "_blank" : undefined} rel={url ? "noreferrer" : undefined}>
+                                  <div className="radar-tags">
+                                    <span className={`severity ${impact}`}>{impact}</span>
+                                    <span className={`dir ${direction}`}>{direction}</span>
+                                    <span className="chip">{horizon}</span>
+                                    {related.map((ticker) => (
+                                      <span className="chip" key={`${title}-${ticker}`}>
+                                        {ticker}
+                                      </span>
+                                    ))}
+                                  </div>
+                                  <div className="headline-title">{title}</div>
+                                  <div className="headline-meta">
+                                    {source}
+                                    {publishedAt ? ` · ${publishedAt.slice(0, 16)}` : ""}
+                                  </div>
+                                </a>
+                              );
+                            })}
+                          </div>
+                        )}
+                      </section>
+                    </>
+                  )}
                 </>
               )}
 
@@ -1260,17 +1306,21 @@ export default function AnalysisPage() {
                   <section className="panel">
                     <h3>Holdings Intelligence</h3>
                     <p className="helper-text">Use Essentials for quick decisions. Open row details for rationale, valuation inputs, and technical context.</p>
-                    <div className="section-switcher" style={{ marginTop: 10 }}>
-                      <button className={`switch-chip ${holdingsView === "essentials" ? "active" : ""}`} onClick={() => setHoldingsView("essentials")}>
-                        Essentials
-                      </button>
-                      <button className={`switch-chip ${holdingsView === "quant" ? "active" : ""}`} onClick={() => setHoldingsView("quant")}>
-                        Quant
-                      </button>
-                      <button className={`switch-chip ${holdingsView === "full" ? "active" : ""}`} onClick={() => setHoldingsView("full")}>
-                        Full
-                      </button>
-                    </div>
+                    {isProView ? (
+                      <div className="section-switcher" style={{ marginTop: 10 }}>
+                        <button className={`switch-chip ${effectiveHoldingsView === "essentials" ? "active" : ""}`} onClick={() => setHoldingsView("essentials")}>
+                          Essentials
+                        </button>
+                        <button className={`switch-chip ${effectiveHoldingsView === "quant" ? "active" : ""}`} onClick={() => setHoldingsView("quant")}>
+                          Quant
+                        </button>
+                        <button className={`switch-chip ${effectiveHoldingsView === "full" ? "active" : ""}`} onClick={() => setHoldingsView("full")}>
+                          Full
+                        </button>
+                      </div>
+                    ) : (
+                      <div className="helper-text" style={{ marginTop: 8 }}>Focus View shows essentials only. Switch to Pro View for quant/full diagnostics.</div>
+                    )}
                     {tickerIntel.length === 0 ? (
                       <div className="status">Ticker intelligence was unavailable in this run.</div>
                     ) : (
@@ -1280,7 +1330,7 @@ export default function AnalysisPage() {
                             <tr>
                               <th>Ticker</th>
                               <th>Action</th>
-                              {holdingsView === "essentials" && (
+                              {effectiveHoldingsView === "essentials" && (
                                 <>
                                   <th>Conviction</th>
                                   <th>Value View</th>
@@ -1290,7 +1340,7 @@ export default function AnalysisPage() {
                                   <th>Details</th>
                                 </>
                               )}
-                              {holdingsView === "quant" && (
+                              {effectiveHoldingsView === "quant" && (
                                 <>
                                   <th>Tech Score</th>
                                   <th>RSI</th>
@@ -1301,7 +1351,7 @@ export default function AnalysisPage() {
                                   <th>Crowding</th>
                                 </>
                               )}
-                              {holdingsView === "full" && (
+                              {effectiveHoldingsView === "full" && (
                                 <>
                                   <th>Tech State</th>
                                   <th>Tech Score</th>
@@ -1349,7 +1399,7 @@ export default function AnalysisPage() {
                                   <tr key={`row-${ticker}-${idx}`} className="intel-row">
                                     <td className="mono">{ticker}</td>
                                     <td>{action}</td>
-                                    {holdingsView === "essentials" && (
+                                    {effectiveHoldingsView === "essentials" && (
                                       <>
                                         <td>
                                           <span className={`severity ${conviction.cls}`}>{conviction.label}</span>
@@ -1369,7 +1419,7 @@ export default function AnalysisPage() {
                                         </td>
                                       </>
                                     )}
-                                    {holdingsView === "quant" && (
+                                    {effectiveHoldingsView === "quant" && (
                                       <>
                                         <td>{pct(techScore)}</td>
                                         <td>{rsi === null ? "-" : rsi.toFixed(1)}</td>
@@ -1380,7 +1430,7 @@ export default function AnalysisPage() {
                                         <td>{pct(crowding)}</td>
                                       </>
                                     )}
-                                    {holdingsView === "full" && (
+                                    {effectiveHoldingsView === "full" && (
                                       <>
                                         <td>{techState}</td>
                                         <td>{pct(techScore)}</td>
@@ -1433,47 +1483,49 @@ export default function AnalysisPage() {
                     )}
                   </section>
 
-                  <section className="grid two" style={{ marginTop: 14 }}>
-                    <article className="panel">
-                      <h3>Alpha Book: Long Bias</h3>
-                      {alphaLongBias.length === 0 ? (
-                        <div className="status">No long-bias candidates surfaced by this run.</div>
-                      ) : (
-                        <div className="notes" style={{ marginTop: 8 }}>
-                          {alphaLongBias.map((row, idx) => {
-                            const ticker = typeof row.ticker === "string" ? row.ticker : `L${idx + 1}`;
-                            const score = asNumber(row.score);
-                            const confidence = asNumber(row.confidence);
-                            return (
-                              <div className="note" key={`${ticker}-${idx}`}>
-                                <strong>{ticker}</strong> alpha {pct(score)} · confidence {pct(confidence)}
-                              </div>
-                            );
-                          })}
-                        </div>
-                      )}
-                    </article>
+                  {isProView && (
+                    <section className="grid two" style={{ marginTop: 14 }}>
+                      <article className="panel">
+                        <h3>Alpha Book: Long Bias</h3>
+                        {alphaLongBias.length === 0 ? (
+                          <div className="status">No long-bias candidates surfaced by this run.</div>
+                        ) : (
+                          <div className="notes" style={{ marginTop: 8 }}>
+                            {alphaLongBias.map((row, idx) => {
+                              const ticker = typeof row.ticker === "string" ? row.ticker : `L${idx + 1}`;
+                              const score = asNumber(row.score);
+                              const confidence = asNumber(row.confidence);
+                              return (
+                                <div className="note" key={`${ticker}-${idx}`}>
+                                  <strong>{ticker}</strong> alpha {pct(score)} · confidence {pct(confidence)}
+                                </div>
+                              );
+                            })}
+                          </div>
+                        )}
+                      </article>
 
-                    <article className="panel">
-                      <h3>Alpha Book: Underweight Bias</h3>
-                      {alphaUnderBias.length === 0 ? (
-                        <div className="status">No underweight candidates surfaced by this run.</div>
-                      ) : (
-                        <div className="notes" style={{ marginTop: 8 }}>
-                          {alphaUnderBias.map((row, idx) => {
-                            const ticker = typeof row.ticker === "string" ? row.ticker : `U${idx + 1}`;
-                            const score = asNumber(row.score);
-                            const confidence = asNumber(row.confidence);
-                            return (
-                              <div className="note" key={`${ticker}-${idx}`}>
-                                <strong>{ticker}</strong> alpha {pct(score)} · confidence {pct(confidence)}
-                              </div>
-                            );
-                          })}
-                        </div>
-                      )}
-                    </article>
-                  </section>
+                      <article className="panel">
+                        <h3>Alpha Book: Underweight Bias</h3>
+                        {alphaUnderBias.length === 0 ? (
+                          <div className="status">No underweight candidates surfaced by this run.</div>
+                        ) : (
+                          <div className="notes" style={{ marginTop: 8 }}>
+                            {alphaUnderBias.map((row, idx) => {
+                              const ticker = typeof row.ticker === "string" ? row.ticker : `U${idx + 1}`;
+                              const score = asNumber(row.score);
+                              const confidence = asNumber(row.confidence);
+                              return (
+                                <div className="note" key={`${ticker}-${idx}`}>
+                                  <strong>{ticker}</strong> alpha {pct(score)} · confidence {pct(confidence)}
+                                </div>
+                              );
+                            })}
+                          </div>
+                        )}
+                      </article>
+                    </section>
+                  )}
 
                   <section className="panel" style={{ marginTop: 14 }}>
                     <h3>Positions</h3>

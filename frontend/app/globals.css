@@ -233,6 +233,14 @@ a {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
+  align-items: center;
+}
+
+.mode-switch {
+  display: inline-flex;
+  gap: 8px;
+  margin-left: auto;
+  flex-wrap: wrap;
 }
 
 .switch-chip {
@@ -1020,6 +1028,11 @@ tbody tr:hover {
   .top-actions {
     width: 100%;
     justify-content: flex-start;
+  }
+
+  .mode-switch {
+    width: 100%;
+    margin-left: 0;
   }
 
   .onboarding-banner {
