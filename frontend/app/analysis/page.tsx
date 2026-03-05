@@ -483,6 +483,34 @@ export default function AnalysisPage() {
     if (score >= 0.45) return { label: "medium", cls: "medium" as const };
     return { label: "low", cls: "low" as const };
   };
+  const displaySeverity = (raw: string) => {
+    const normalized = raw === "high" || raw === "low" ? raw : "medium";
+    if (!lossMode) return { label: normalized, cls: normalized };
+    if (normalized === "high") return { label: "too-sensible", cls: "low" as const };
+    if (normalized === "low") return { label: "certified-chaos", cls: "high" as const };
+    return { label: "coin-flip", cls: "medium" as const };
+  };
+  const displayDirection = (raw: string) => {
+    const normalized = raw === "risk-up" || raw === "risk-down" ? raw : "neutral";
+    if (!lossMode) return { label: normalized, cls: normalized };
+    if (normalized === "risk-up") return { label: "panic-sell", cls: "risk-down" as const };
+    if (normalized === "risk-down") return { label: "panic-buy", cls: "risk-up" as const };
+    return { label: "bag-hold", cls: "neutral" as const };
+  };
+  const displayAction = (raw: string) => {
+    if (!lossMode) return raw;
+    if (raw === "trim" || raw === "de-risk") return "double-down";
+    if (raw === "add" || raw === "increase" || raw === "accumulate") return "buy-higher";
+    if (raw === "reduce") return "add-morally";
+    return "wing-it";
+  };
+  const displayStance = () => {
+    if (!lossMode) return { label: pulseStance.replace("-", " "), cls: pulseStance };
+    if (pulseStance === "risk-on") return { label: "panic sell", cls: "risk-off" as const };
+    if (pulseStance === "risk-off") return { label: "panic buy", cls: "risk-on" as const };
+    return { label: "bag hold", cls: "neutral" as const };
+  };
+  const pulseStanceView = displayStance();
   const submodelRows = useMemo(() => {
     if (!submodels) return [] as Array<{ name: string; score: number; confidence: number }>;
     return Object.entries(submodels)
@@ -714,7 +742,7 @@ export default function AnalysisPage() {
           <div className="pulse-label">{lossMode ? "Market Doomcast" : "Market Pulse"}</div>
           <div className="pulse-row">
             <p className="pulse-text">{pulseThesis}</p>
-            <span className={`stance ${pulseStance}`}>{pulseStance.replace("-", " ")}</span>
+            <span className={`stance ${pulseStanceView.cls}`}>{pulseStanceView.label}</span>
           </div>
           {pulseDeskNote && <p className="pulse-note">{pulseDeskNote}</p>}
           {pulseFocus.length > 0 && (
@@ -824,14 +852,18 @@ export default function AnalysisPage() {
             <button className={`switch-chip ${activeTab === "holdings" ? "active" : ""}`} onClick={() => setActiveTab("holdings")}>Holdings</button>
             <button className={`switch-chip ${activeTab === "news" ? "active" : ""}`} onClick={() => setActiveTab("news")}>News</button>
             <div className="mode-switch">
-              <button className={`switch-chip ${layoutMode === "focus" ? "active" : ""}`} onClick={() => setLayoutMode("focus")}>Focus View</button>
-              <button className={`switch-chip ${layoutMode === "pro" ? "active" : ""}`} onClick={() => setLayoutMode("pro")}>Pro View</button>
+              <button className={`switch-chip ${layoutMode === "focus" ? "active" : ""}`} onClick={() => setLayoutMode("focus")}>
+                {lossMode ? "Panic View" : "Focus View"}
+              </button>
+              <button className={`switch-chip ${layoutMode === "pro" ? "active" : ""}`} onClick={() => setLayoutMode("pro")}>
+                {lossMode ? "Chaos View" : "Pro View"}
+              </button>
             </div>
           </section>
           <p className="helper-text">
             {isProView
-              ? "Pro View shows full model internals and diagnostics."
-              : "Focus View highlights core decisions and hides secondary diagnostics."}
+              ? (lossMode ? "Chaos View reveals every overfit signal you can misuse with confidence." : "Pro View shows full model internals and diagnostics.")
+              : (lossMode ? "Panic View hides nuance so you can react emotionally at max speed." : "Focus View highlights core decisions and hides secondary diagnostics.")}
           </p>
           {lossMode && (
             <p className="helper-text">LossPulse is satire: dark humor layered on real data to teach risk discipline.</p>
@@ -921,7 +953,11 @@ export default function AnalysisPage() {
 
                       <article className="panel signal-panel">
                         <h3>Construction Engine</h3>
-                        <p className="helper-text">Target weights are model suggestions for balance and risk control, not direct trade instructions.</p>
+                        <p className="helper-text">
+                          {lossMode
+                            ? "How to sabotage sizing: ignore concentration, max turnover, and call it conviction."
+                            : "Target weights are model suggestions for balance and risk control, not direct trade instructions."}
+                        </p>
                         <div className="notes">
                           <div className="note">Projected top holding: {pct(projectedTop1)}</div>
                           <div className="note">Projected turnover: {pct(projectedTurnover)}</div>
@@ -973,11 +1009,12 @@ export default function AnalysisPage() {
                               const label = typeof row.label === "string" ? row.label : `Driver ${idx + 1}`;
                               const detail = typeof row.detail === "string" ? row.detail : "";
                               const severity = row.severity === "high" || row.severity === "low" ? row.severity : "medium";
+                              const severityView = displaySeverity(severity);
                               return (
                                 <div className="signal-item" key={`${label}-${idx}`}>
                                   <div className="signal-head">
                                     <strong>{label}</strong>
-                                    <span className={`severity ${severity}`}>{severity}</span>
+                                    <span className={`severity ${severityView.cls}`}>{severityView.label}</span>
                                   </div>
                                   {detail && <div className="signal-text">{detail}</div>}
                                 </div>
@@ -998,11 +1035,12 @@ export default function AnalysisPage() {
                               const intensity = asNumber(row.intensity);
                               const confidence = asNumber(row.confidence);
                               const direction = row.direction === "risk-up" || row.direction === "risk-down" ? row.direction : "neutral";
+                              const directionView = displayDirection(direction);
                               return (
                                 <div className="signal-item" key={`${theme}-${idx}`}>
                                   <div className="signal-head">
                                     <strong>{theme}</strong>
-                                    <span className={`dir ${direction}`}>{direction}</span>
+                                    <span className={`dir ${directionView.cls}`}>{directionView.label}</span>
                                   </div>
                                   <div className="signal-meta">intensity {pct(intensity)} · confidence {pct(confidence)}</div>
                                 </div>
@@ -1058,12 +1096,16 @@ export default function AnalysisPage() {
 
                     <article className="panel">
                       <h3>Macro: What It Means</h3>
-                      <p className="helper-text">Plain-language readthrough for non-experts: what macro moves imply for positioning.</p>
+                      <p className="helper-text">
+                        {lossMode
+                          ? "How to misread macro with confidence: reverse signal logic and size up at the worst time."
+                          : "Plain-language readthrough for non-experts: what macro moves imply for positioning."}
+                      </p>
                       <div className="notes" style={{ marginTop: 10 }}>
                         {macroContextSummary ? <div className="note">{macroContextSummary}</div> : <div className="note">Interpretation layer is calibrating for this run.</div>}
                       </div>
                       <div className="macro-meaning-meta">
-                        <span className={`dir ${macroContextRegimeClass}`}>{macroContextRegime}</span>
+                        <span className={`dir ${displayDirection(macroContextRegimeClass).cls}`}>{displayDirection(macroContextRegimeClass).label}</span>
                       </div>
                       {macroContextDrivers.length > 0 && (
                         <div className="signal-list" style={{ marginTop: 10 }}>
@@ -1071,6 +1113,7 @@ export default function AnalysisPage() {
                             const driver = typeof row.driver === "string" ? row.driver : `Driver ${idx + 1}`;
                             const move = typeof row.move === "string" ? row.move : "-";
                             const signal = row.signal === "risk-up" || row.signal === "risk-down" ? row.signal : "neutral";
+                            const signalView = displayDirection(signal);
                             const meaning = typeof row.meaning === "string" ? row.meaning : "";
                             const playbook = typeof row.playbook === "string" ? row.playbook : "";
                             return (
@@ -1080,7 +1123,7 @@ export default function AnalysisPage() {
                                   <span className="signal-meta">{move}</span>
                                 </div>
                                 <div className="macro-driver-tags">
-                                  <span className={`dir ${signal}`}>{signal}</span>
+                                  <span className={`dir ${signalView.cls}`}>{signalView.label}</span>
                                 </div>
                                 {meaning && <div className="signal-text">{meaning}</div>}
                                 {playbook && <div className="signal-meta">{playbook}</div>}
@@ -1094,6 +1137,7 @@ export default function AnalysisPage() {
                           {macroContextReleases.map((row, idx) => {
                             const event = typeof row.event === "string" ? row.event : `Release ${idx + 1}`;
                             const signal = row.signal === "risk-up" || row.signal === "risk-down" ? row.signal : "neutral";
+                            const signalView = displayDirection(signal);
                             const importance = asNumber(row.importance);
                             const surprise = asNumber(row.surprise);
                             const actual = asNumber(row.actual);
@@ -1106,7 +1150,7 @@ export default function AnalysisPage() {
                               <div className="signal-item macro-release" key={`${event}-${idx}`}>
                                 <div className="signal-head">
                                   <strong>{event}</strong>
-                                  <span className={`dir ${signal}`}>{signal}</span>
+                                  <span className={`dir ${signalView.cls}`}>{signalView.label}</span>
                                 </div>
                                 <div className="signal-meta">
                                   {date} · importance {importance ? `${importance}/3` : "-"}
@@ -1160,17 +1204,18 @@ export default function AnalysisPage() {
                 <>
                   {warnings.length > 0 && (
                     <section className="panel warning-panel">
-                      <h3>Warning Board</h3>
+                      <h3>{lossMode ? "Bad-Decision Board" : "Warning Board"}</h3>
                       <div className="warning-list">
                         {warnings.map((row, idx) => {
                           const title = typeof row.title === "string" ? row.title : "Warning";
                           const severity = row.severity === "high" || row.severity === "low" ? row.severity : "medium";
+                          const severityView = displaySeverity(severity);
                           const reason = typeof row.reason === "string" ? row.reason : "";
                           return (
-                            <div className={`warning-item ${severity}`} key={`${title}-${idx}`}>
+                            <div className={`warning-item ${severityView.cls}`} key={`${title}-${idx}`}>
                               <div className="warning-head">
                                 <strong>{title}</strong>
-                                <span className={`severity ${severity}`}>{severity}</span>
+                                <span className={`severity ${severityView.cls}`}>{severityView.label}</span>
                               </div>
                               {reason && <div className="warning-reason">{reason}</div>}
                             </div>
@@ -1182,9 +1227,11 @@ export default function AnalysisPage() {
 
                   <section className="grid two" style={{ marginTop: 14 }}>
                     <article className="panel signal-panel">
-                      <h3>Opportunity Scanner</h3>
+                      <h3>{lossMode ? "Bagholder Opportunity Scanner" : "Opportunity Scanner"}</h3>
                       {opportunities.length === 0 ? (
-                        <div className="status">No high-conviction dislocation setup in this run.</div>
+                        <div className="status">
+                          {lossMode ? "No obvious trap to chase in this run. Try more emotional tickers." : "No high-conviction dislocation setup in this run."}
+                        </div>
                       ) : (
                         <div className="signal-list">
                           {opportunities.map((row, idx) => {
@@ -1196,10 +1243,12 @@ export default function AnalysisPage() {
                               <div className="signal-item opportunity" key={`${ticker}-${idx}`}>
                                 <div className="signal-head">
                                   <strong>{ticker}</strong>
-                                  <span className="severity low">score {score?.toFixed(2) || "-"}</span>
+                                  <span className={`severity ${displaySeverity("low").cls}`}>
+                                    {lossMode ? "buy-the-rip" : "score"} {score?.toFixed(2) || "-"}
+                                  </span>
                                 </div>
                                 <div className="signal-meta">confidence {pct(confidence)}</div>
-                                {reason && <div className="signal-text">{reason}</div>}
+                                {reason && <div className="signal-text">{lossMode ? `Inverse read: ${reason}` : reason}</div>}
                               </div>
                             );
                           })}
@@ -1208,9 +1257,11 @@ export default function AnalysisPage() {
                     </article>
 
                     <article className="panel signal-panel">
-                      <h3>Distribution Scanner</h3>
+                      <h3>{lossMode ? "Exit Liquidity Scanner" : "Distribution Scanner"}</h3>
                       {exitSignals.length === 0 ? (
-                        <div className="status">No crowding-driven trim signal in this run.</div>
+                        <div className="status">
+                          {lossMode ? "No exit-liquidity setup detected. Market participants are being rational for now." : "No crowding-driven trim signal in this run."}
+                        </div>
                       ) : (
                         <div className="signal-list">
                           {exitSignals.map((row, idx) => {
@@ -1222,10 +1273,12 @@ export default function AnalysisPage() {
                               <div className="signal-item exit" key={`${ticker}-${idx}`}>
                                 <div className="signal-head">
                                   <strong>{ticker}</strong>
-                                  <span className="severity high">score {score?.toFixed(2) || "-"}</span>
+                                  <span className={`severity ${displaySeverity("high").cls}`}>
+                                    {lossMode ? "diamond-hands" : "score"} {score?.toFixed(2) || "-"}
+                                  </span>
                                 </div>
                                 <div className="signal-meta">confidence {pct(confidence)}</div>
-                                {reason && <div className="signal-text">{reason}</div>}
+                                {reason && <div className="signal-text">{lossMode ? `Inverse read: ${reason}` : reason}</div>}
                               </div>
                             );
                           })}
@@ -1270,9 +1323,11 @@ export default function AnalysisPage() {
                     </article>
 
                     <article className="panel signal-panel">
-                      <h3>Portfolio Action Book</h3>
+                      <h3>{lossMode ? "Portfolio Misaction Book" : "Portfolio Action Book"}</h3>
                       {portfolioActions.length === 0 ? (
-                        <div className="status">No explicit rebalance actions from current model run.</div>
+                        <div className="status">
+                          {lossMode ? "No obvious mistakes auto-generated this run. Manual overconfidence still available." : "No explicit rebalance actions from current model run."}
+                        </div>
                       ) : (
                         <div className="signal-list">
                           {portfolioActions.slice(0, 6).map((row, idx) => {
@@ -1280,15 +1335,18 @@ export default function AnalysisPage() {
                             const action = typeof row.action === "string" ? row.action : "hold";
                             const delta = asNumber(row.targetWeightDelta);
                             const urgency = row.urgency === "high" || row.urgency === "low" ? row.urgency : "medium";
+                            const urgencyView = displaySeverity(urgency);
                             const reason = typeof row.reason === "string" ? row.reason : "";
                             return (
                               <div className={`signal-item ${action === "trim" || action === "de-risk" ? "exit" : "opportunity"}`} key={`${ticker}-${idx}`}>
                                 <div className="signal-head">
                                   <strong>{ticker}</strong>
-                                  <span className={`severity ${urgency}`}>{action}</span>
+                                  <span className={`severity ${urgencyView.cls}`}>{displayAction(action)}</span>
                                 </div>
-                                <div className="signal-meta">target delta {pct(delta)} · urgency {urgency}</div>
-                                {reason && <div className="signal-text">{reason}</div>}
+                                <div className="signal-meta">
+                                  target delta {pct(delta)} · {lossMode ? "chaos level" : "urgency"} {urgencyView.label}
+                                </div>
+                                {reason && <div className="signal-text">{lossMode ? `Inverse read: ${reason}` : reason}</div>}
                               </div>
                             );
                           })}
@@ -1315,7 +1373,7 @@ export default function AnalysisPage() {
                     <>
                       <section className="grid two" style={{ marginTop: 14 }}>
                         <article className="panel">
-                          <h3>Scenario Lens</h3>
+                          <h3>{lossMode ? "Scenario Self-Sabotage Lens" : "Scenario Lens"}</h3>
                           <div className="scenario-tabs">
                             {scenarios.map((row) => {
                               const id = typeof row.id === "string" ? row.id : "";
@@ -1379,7 +1437,7 @@ export default function AnalysisPage() {
                         </article>
 
                         <article className="panel">
-                          <h3>Position Watchouts</h3>
+                          <h3>{lossMode ? "Bagholder Alerts" : "Position Watchouts"}</h3>
                           {watchouts.length === 0 ? (
                             <div className="status">No watchouts available in this run.</div>
                           ) : (
@@ -1387,14 +1445,15 @@ export default function AnalysisPage() {
                               {watchouts.map((row, idx) => {
                                 const ticker = typeof row.ticker === "string" ? row.ticker : "-";
                                 const severity = row.severity === "high" || row.severity === "low" ? row.severity : "medium";
+                                const severityView = displaySeverity(severity);
                                 const text = typeof row.text === "string" ? row.text : "";
                                 return (
-                                  <div className={`watchout-item ${severity}`} key={`${ticker}-${idx}`}>
+                                  <div className={`watchout-item ${severityView.cls}`} key={`${ticker}-${idx}`}>
                                     <div className="warning-head">
                                       <strong>{ticker}</strong>
-                                      <span className={`severity ${severity}`}>{severity}</span>
+                                      <span className={`severity ${severityView.cls}`}>{severityView.label}</span>
                                     </div>
-                                    <div className="watchout-text">{text}</div>
+                                    <div className="watchout-text">{lossMode ? `Anti-signal: ${text}` : text}</div>
                                   </div>
                                 );
                               })}
@@ -1418,13 +1477,15 @@ export default function AnalysisPage() {
                               const publishedAt = typeof row.publishedAt === "string" ? row.publishedAt : "";
                               const impact = row.impact === "high" || row.impact === "low" ? row.impact : "medium";
                               const direction = row.direction === "risk-up" || row.direction === "risk-down" ? row.direction : "neutral";
+                              const impactView = displaySeverity(impact);
+                              const directionView = displayDirection(direction);
                               const horizon = row.horizon === "intraday" || row.horizon === "1m" ? row.horizon : "1w";
                               const related = asStringArray(row.relatedTickers);
                               return (
                                 <a className="headline radar-item" key={`${title}-${idx}`} href={url || "#"} target={url ? "_blank" : undefined} rel={url ? "noreferrer" : undefined}>
                                   <div className="radar-tags">
-                                    <span className={`severity ${impact}`}>{impact}</span>
-                                    <span className={`dir ${direction}`}>{direction}</span>
+                                    <span className={`severity ${impactView.cls}`}>{impactView.label}</span>
+                                    <span className={`dir ${directionView.cls}`}>{directionView.label}</span>
                                     <span className="chip">{horizon}</span>
                                     {related.map((ticker) => (
                                       <span className="chip" key={`${title}-${ticker}`}>
@@ -1452,7 +1513,11 @@ export default function AnalysisPage() {
                 <>
                   <section className="panel">
                     <h3>Holdings Intelligence</h3>
-                    <p className="helper-text">Use Essentials for quick decisions. Open row details for rationale, valuation inputs, and technical context.</p>
+                    <p className="helper-text">
+                      {lossMode
+                        ? "Use Essentials to make snap judgments. Open row details if you accidentally want evidence."
+                        : "Use Essentials for quick decisions. Open row details for rationale, valuation inputs, and technical context."}
+                    </p>
                     {isProView ? (
                       <div className="section-switcher" style={{ marginTop: 10 }}>
                         <button className={`switch-chip ${effectiveHoldingsView === "essentials" ? "active" : ""}`} onClick={() => setHoldingsView("essentials")}>
@@ -1466,7 +1531,11 @@ export default function AnalysisPage() {
                         </button>
                       </div>
                     ) : (
-                      <div className="helper-text" style={{ marginTop: 8 }}>Focus View shows essentials only. Switch to Pro View for quant/full diagnostics.</div>
+                      <div className="helper-text" style={{ marginTop: 8 }}>
+                        {lossMode
+                          ? "Panic View shows only headline-friendly metrics. Use Chaos View for full overfit diagnostics."
+                          : "Focus View shows essentials only. Switch to Pro View for quant/full diagnostics."}
+                      </div>
                     )}
                     {tickerIntel.length === 0 ? (
                       <div className="status">Ticker intelligence was unavailable in this run.</div>
@@ -1541,15 +1610,16 @@ export default function AnalysisPage() {
                               const confidence = asNumber(row.confidence);
                               const themes = asStringArray(row.themes).slice(0, 2).join(", ") || "-";
                               const conviction = convictionLabel(row);
+                              const convictionView = displaySeverity(conviction.cls);
                               const isExpanded = expandedTicker === ticker;
                               return [
                                   <tr key={`row-${ticker}-${idx}`} className="intel-row">
                                     <td className="mono">{ticker}</td>
-                                    <td>{action}</td>
+                                    <td>{displayAction(action)}</td>
                                     {effectiveHoldingsView === "essentials" && (
                                       <>
                                         <td>
-                                          <span className={`severity ${conviction.cls}`}>{conviction.label}</span>
+                                          <span className={`severity ${convictionView.cls}`}>{convictionView.label}</span>
                                         </td>
                                         <td>{valueView}</td>
                                         <td>{techState}</td>
@@ -1711,10 +1781,10 @@ export default function AnalysisPage() {
               {activeTab === "news" && (
                 <>
                   <section className="panel">
-                    <h3>Headline Impact Radar</h3>
+                    <h3>{lossMode ? "Headline Chaos Radar" : "Headline Impact Radar"}</h3>
                     {radar.length === 0 ? (
                       <div className="status" style={{ marginTop: 8 }}>
-                        Headline scoring unavailable in this run.
+                        {lossMode ? "No panic catalyst scoring available in this run." : "Headline scoring unavailable in this run."}
                       </div>
                     ) : (
                       <div className="headlines radar-list" style={{ marginTop: 8 }}>
@@ -1725,13 +1795,15 @@ export default function AnalysisPage() {
                           const publishedAt = typeof row.publishedAt === "string" ? row.publishedAt : "";
                           const impact = row.impact === "high" || row.impact === "low" ? row.impact : "medium";
                           const direction = row.direction === "risk-up" || row.direction === "risk-down" ? row.direction : "neutral";
+                          const impactView = displaySeverity(impact);
+                          const directionView = displayDirection(direction);
                           const horizon = row.horizon === "intraday" || row.horizon === "1m" ? row.horizon : "1w";
                           const related = asStringArray(row.relatedTickers);
                           return (
                             <a className="headline radar-item" key={`${title}-${idx}`} href={url || "#"} target={url ? "_blank" : undefined} rel={url ? "noreferrer" : undefined}>
                               <div className="radar-tags">
-                                <span className={`severity ${impact}`}>{impact}</span>
-                                <span className={`dir ${direction}`}>{direction}</span>
+                                <span className={`severity ${impactView.cls}`}>{impactView.label}</span>
+                                <span className={`dir ${directionView.cls}`}>{directionView.label}</span>
                                 <span className="chip">{horizon}</span>
                                 {related.map((ticker) => (
                                   <span className="chip" key={`${title}-${ticker}`}>
