@@ -24,6 +24,7 @@ type UiPrefs = {
   railTab: RailTab;
   holdingsView: HoldingsView;
   layoutMode: LayoutMode;
+  lossMode: boolean;
   activeScenario: string;
   scenarioScale: number;
   savedAt: number;
@@ -36,6 +37,7 @@ type SharePayload = {
     rail?: RailTab;
     holdingsView?: HoldingsView;
     layout?: LayoutMode;
+    lossMode?: boolean;
     scenario?: string;
     shock?: number;
   };
@@ -90,6 +92,19 @@ function asRecordArray(value: unknown): Record<string, unknown>[] {
 
 function asNumber(value: unknown): number | null {
   return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function clamp01(value: number): number {
+  return Math.max(0, Math.min(1, value));
+}
+
+function hashString(input: string): number {
+  let hash = 0;
+  for (let i = 0; i < input.length; i += 1) {
+    hash = (hash << 5) - hash + input.charCodeAt(i);
+    hash |= 0;
+  }
+  return Math.abs(hash);
 }
 
 function normalizePositions(value: unknown): Position[] {
@@ -152,6 +167,7 @@ export default function AnalysisPage() {
   const [railTab, setRailTab] = useState<RailTab>("macro");
   const [holdingsView, setHoldingsView] = useState<HoldingsView>("essentials");
   const [layoutMode, setLayoutMode] = useState<LayoutMode>("focus");
+  const [lossMode, setLossMode] = useState(false);
   const [expandedTicker, setExpandedTicker] = useState<string | null>(null);
   const [shareStatus, setShareStatus] = useState<"" | "copied" | "failed">("");
   const [isDemoSeeded, setIsDemoSeeded] = useState(false);
@@ -173,6 +189,7 @@ export default function AnalysisPage() {
         const sharedRail = shared.ui.rail || null;
         const sharedHoldings = shared.ui.holdingsView || null;
         const sharedLayout = shared.ui.layout || null;
+        const sharedLossMode = shared.ui.lossMode;
         if (isViewTab(sharedTab)) {
           setActiveTab(sharedTab);
           hasUrlTab = true;
@@ -188,6 +205,9 @@ export default function AnalysisPage() {
         if (isLayoutMode(sharedLayout)) {
           setLayoutMode(sharedLayout);
           hasUrlLayout = true;
+        }
+        if (typeof sharedLossMode === "boolean") {
+          setLossMode(sharedLossMode);
         }
         if (typeof shared.ui.scenario === "string" && shared.ui.scenario.trim().length > 0) {
           setActiveScenario(shared.ui.scenario.trim());
@@ -251,10 +271,12 @@ export default function AnalysisPage() {
       const savedRail = typeof prefs.railTab === "string" ? prefs.railTab : null;
       const savedHoldingsView = typeof prefs.holdingsView === "string" ? prefs.holdingsView : null;
       const savedLayoutMode = typeof prefs.layoutMode === "string" ? prefs.layoutMode : null;
+      const savedLossMode = prefs.lossMode;
       if (!hasUrlTab && isViewTab(savedTab)) setActiveTab(savedTab);
       if (!hasUrlRail && isRailTab(savedRail)) setRailTab(savedRail);
       if (!hasUrlHoldingsView && isHoldingsView(savedHoldingsView)) setHoldingsView(savedHoldingsView);
       if (!hasUrlLayout && isLayoutMode(savedLayoutMode)) setLayoutMode(savedLayoutMode);
+      if (typeof savedLossMode === "boolean") setLossMode(savedLossMode);
       if (!hasUrlScenario && typeof prefs.activeScenario === "string") setActiveScenario(prefs.activeScenario);
       if (!hasUrlShock && typeof prefs.scenarioScale === "number" && Number.isFinite(prefs.scenarioScale)) {
         setScenarioScale(Math.min(2, Math.max(0.5, prefs.scenarioScale)));
@@ -498,12 +520,13 @@ export default function AnalysisPage() {
       railTab,
       holdingsView,
       layoutMode,
+      lossMode,
       activeScenario,
       scenarioScale,
       savedAt: Date.now(),
     };
     localStorage.setItem(UI_PREFS_KEY, JSON.stringify(payload));
-  }, [activeTab, railTab, holdingsView, layoutMode, activeScenario, scenarioScale, prefsHydrated]);
+  }, [activeTab, railTab, holdingsView, layoutMode, lossMode, activeScenario, scenarioScale, prefsHydrated]);
 
   const selectedScenario = scenarios.find((row) => row.id === activeScenario) || scenarios[0] || null;
   const scenarioExposed = selectedScenario ? asRecordArray(selectedScenario.exposed) : [];
@@ -517,6 +540,66 @@ export default function AnalysisPage() {
         .slice(0, 5),
     [analysis]
   );
+
+  const lossMetrics = useMemo(() => {
+    const downside = asNumber(prediction5d?.downsideProb) || 0;
+    const vol60 = analysis?.risk?.vol60d || 0;
+    const drawdown = analysis?.risk?.maxDrawdown120d || 0;
+    const top5 = analysis?.top_concentration?.top5Weight || 0;
+    const warningHigh = warnings.filter((row) => row.severity === "high").length;
+    const warningIntensity = clamp01(warningHigh / 4);
+    const turnover = projectedTurnover || 0;
+    const macroBuzz = clamp01((Number(dataQuality?.macroNewsCount || 0)) / 12);
+
+    const lossVelocity = clamp01((downside * 0.55) + (Math.min(1, vol60 / 0.35) * 0.45));
+    const bagHolderIndex = clamp01((Math.min(1, top5 / 0.95) * 0.45) + (Math.min(1, drawdown / 0.2) * 0.35) + (warningIntensity * 0.2));
+    const regretScore = clamp01((warningIntensity * 0.45) + (Math.min(1, drawdown / 0.22) * 0.35) + (Math.max(0, top5 - 0.7) * 1.2 * 0.2));
+    const impulseTradeRatio = clamp01((Math.min(1, turnover / 0.45) * 0.5) + (macroBuzz * 0.3) + (Math.min(1, (asNumber(scaledScenarioImpact) ? Math.abs(asNumber(scaledScenarioImpact) || 0) : 0) / 0.03) * 0.2));
+
+    return { lossVelocity, bagHolderIndex, regretScore, impulseTradeRatio };
+  }, [
+    prediction5d,
+    analysis,
+    warnings,
+    projectedTurnover,
+    dataQuality,
+    scaledScenarioImpact,
+  ]);
+
+  const fakeLoserLeaderboard = useMemo(() => {
+    const seed = hashString(`${analysis?.as_of || "na"}-${analysis?.portfolio_value || 0}-${positions.length}`);
+    const names = [
+      "PaperHands_007",
+      "BuyHighSellLow",
+      "ThetaVictim",
+      "FOMO_Captain",
+      "DipCatcher404",
+      "MacroDoomer",
+      "LeverageEnjoyer",
+      "ExitLiquidityPro",
+    ];
+    const rows = names.map((name, idx) => {
+      const x = (seed + idx * 7919) % 1000;
+      const lossPct = -((8 + (x % 37)) / 100);
+      const streak = 2 + (x % 11);
+      const style = ["panic-sell", "revenge-trade", "averaging-down", "all-in-top", "earnings-gamble"][x % 5];
+      return {
+        rank: idx + 1,
+        name,
+        lossPct,
+        streak,
+        style,
+      };
+    });
+    return rows.sort((a, b) => a.lossPct - b.lossPct).slice(0, 5);
+  }, [analysis, positions.length]);
+
+  const darkPlaybook = [
+    "Buy the breakout after +18% in 2 days, then call it conviction.",
+    "Ignore risk limits because vibes are a strategy.",
+    "Panic-sell the first red candle to lock in certainty.",
+    "Average down without thesis until it becomes a personality.",
+  ];
 
   const railCounts = {
     macro: topHeadlines.length,
@@ -538,6 +621,7 @@ export default function AnalysisPage() {
         rail: railTab,
         holdingsView,
         layout: layoutMode,
+        lossMode,
         scenario: activeScenario || undefined,
         shock: Math.abs(scenarioScale - 1) > 0.001 ? Number(scenarioScale.toFixed(1)) : undefined,
       },
@@ -558,7 +642,7 @@ export default function AnalysisPage() {
   };
 
   return (
-    <main className="container">
+    <main className={`container ${lossMode ? "losspulse" : ""}`}>
       <header className="topbar">
         <Link href="/portfolio" className="brand">
           <span className="brand-dot" />
@@ -568,6 +652,9 @@ export default function AnalysisPage() {
           <Link href="/portfolio" className="nav-link">
             Edit Portfolio
           </Link>
+          <button className={`btn ${lossMode ? "primary" : "secondary"}`} onClick={() => setLossMode((v) => !v)}>
+            {lossMode ? "Exit LossPulse" : "Enter LossPulse"}
+          </button>
           <button className="btn secondary" onClick={handleShareView} disabled={!positions.length}>
             Share View
           </button>
@@ -600,21 +687,26 @@ export default function AnalysisPage() {
       )}
 
       <section className="hero">
-        <h1>Portfolio Risk Overview</h1>
-        <p className="hero-sub">Multi-model risk engine with forecast, action book, and instant news context.</p>
+        <h1>{lossMode ? "LossPulse: Capital Destruction Terminal" : "Portfolio Risk Overview"}</h1>
+        <p className="hero-sub">
+          {lossMode
+            ? "Optimizing capital destruction with professional-grade bad decisions. Educational parody only."
+            : "Multi-model risk engine with forecast, action book, and instant news context."}
+        </p>
         {analysis && (
           <div className="hero-meta">
             <span className="pill">As of {analysis.as_of}</span>
             <span className="pill">Portfolio {money(analysis.portfolio_value)}</span>
             <span className="pill">Top5 {pct(analysis.top_concentration.top5Weight)}</span>
             <span className="pill">Model {typeof modelInfo?.name === "string" ? modelInfo.name : "baseline"}</span>
+            {lossMode && <span className="pill">Parody Mode</span>}
           </div>
         )}
       </section>
 
       {analysis && pulseThesis && (
         <section className="pulse">
-          <div className="pulse-label">Market Pulse</div>
+          <div className="pulse-label">{lossMode ? "Market Doomcast" : "Market Pulse"}</div>
           <div className="pulse-row">
             <p className="pulse-text">{pulseThesis}</p>
             <span className={`stance ${pulseStance}`}>{pulseStance.replace("-", " ")}</span>
@@ -656,23 +748,70 @@ export default function AnalysisPage() {
         <>
           <section className="grid cards" style={{ marginTop: 14 }}>
             <article className="kpi">
-              <div className="kpi-label">Portfolio Value</div>
-              <div className="kpi-value">{money(analysis.portfolio_value)}</div>
+              <div className="kpi-label">{lossMode ? "Loss Velocity" : "Portfolio Value"}</div>
+              <div className="kpi-value">{lossMode ? pct(lossMetrics.lossVelocity) : money(analysis.portfolio_value)}</div>
             </article>
             <article className="kpi">
-              <div className="kpi-label">Volatility 60D</div>
-              <div className="kpi-value">{pct(analysis.risk.vol60d)}</div>
+              <div className="kpi-label">{lossMode ? "Bag Holder Index" : "Volatility 60D"}</div>
+              <div className="kpi-value">{lossMode ? pct(lossMetrics.bagHolderIndex) : pct(analysis.risk.vol60d)}</div>
             </article>
             <article className="kpi">
-              <div className="kpi-label">5D Downside Prob</div>
-              <div className="kpi-value">{pct(asNumber(prediction5d?.downsideProb))}</div>
+              <div className="kpi-label">{lossMode ? "Regret Score" : "5D Downside Prob"}</div>
+              <div className="kpi-value">{lossMode ? pct(lossMetrics.regretScore) : pct(asNumber(prediction5d?.downsideProb))}</div>
             </article>
             <article className="kpi">
-              <div className="kpi-label">Forecast Confidence</div>
-              <div className="kpi-value">{pct(predictionConfidence)}</div>
+              <div className="kpi-label">{lossMode ? "Impulse Trade Ratio" : "Forecast Confidence"}</div>
+              <div className="kpi-value">{lossMode ? pct(lossMetrics.impulseTradeRatio) : pct(predictionConfidence)}</div>
             </article>
           </section>
-          <p className="helper-text">Fast read: these cards summarize portfolio scale, realized volatility, near-term downside odds, and model confidence.</p>
+          <p className="helper-text">
+            {lossMode
+              ? "Satire layer: these scores parody common self-inflicted investor mistakes and are meant for risk education."
+              : "Fast read: these cards summarize portfolio scale, realized volatility, near-term downside odds, and model confidence."}
+          </p>
+
+          {lossMode && (
+            <section className="grid two" style={{ marginTop: 10 }}>
+              <article className="panel loss-panel">
+                <h3>Dark Playbook (Do Not Do This)</h3>
+                <div className="notes" style={{ marginTop: 8 }}>
+                  {darkPlaybook.map((line) => (
+                    <div className="note" key={line}>{line}</div>
+                  ))}
+                </div>
+                <div className="status error" style={{ marginTop: 10 }}>
+                  Educational parody. This mode mocks bad behavior so users can avoid it.
+                </div>
+              </article>
+              <article className="panel loss-panel">
+                <h3>Loss Leaderboard (Fake)</h3>
+                <div className="table-wrap" style={{ marginTop: 8 }}>
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>#</th>
+                        <th>Alias</th>
+                        <th>PnL</th>
+                        <th>Streak</th>
+                        <th>Style</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {fakeLoserLeaderboard.map((row) => (
+                        <tr key={row.name}>
+                          <td>{row.rank}</td>
+                          <td className="mono">{row.name}</td>
+                          <td className="neg">{pct(row.lossPct)}</td>
+                          <td>{row.streak}d</td>
+                          <td>{row.style}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </article>
+            </section>
+          )}
 
           <section className="section-switcher" style={{ marginTop: 14 }}>
             <button className={`switch-chip ${activeTab === "overview" ? "active" : ""}`} onClick={() => setActiveTab("overview")}>Overview</button>
@@ -689,6 +828,9 @@ export default function AnalysisPage() {
               ? "Pro View shows full model internals and diagnostics."
               : "Focus View highlights core decisions and hides secondary diagnostics."}
           </p>
+          {lossMode && (
+            <p className="helper-text">LossPulse is satire: dark humor layered on real data to teach risk discipline.</p>
+          )}
 
           <section className="analysis-shell" style={{ marginTop: 14 }}>
             <div className="analysis-main">
@@ -1678,7 +1820,7 @@ export default function AnalysisPage() {
             </div>
 
             <aside className="panel news-rail">
-              <h3>News & Events</h3>
+              <h3>{lossMode ? "Doom Feed" : "News & Events"}</h3>
               <div className="rail-tabs">
                 <button className={`rail-tab ${railTab === "macro" ? "active" : ""}`} onClick={() => setRailTab("macro")}>
                   Macro ({railCounts.macro})

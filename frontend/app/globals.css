@@ -706,6 +706,18 @@ a {
   margin-bottom: 12px;
 }
 
+.loss-panel {
+  border-color: #3a2f45;
+  background: linear-gradient(155deg, #1c1823, #17141e);
+  color: #f2edf8;
+}
+
+.loss-panel .note {
+  background: rgba(255, 255, 255, 0.05);
+  border-color: rgba(255, 255, 255, 0.12);
+  color: #f2edf8;
+}
+
 .muted {
   color: var(--muted);
 }
@@ -956,6 +968,59 @@ tbody tr:hover {
   color: #607184;
   font-size: 0.83rem;
   line-height: 1.35;
+}
+
+.container.losspulse {
+  background:
+    radial-gradient(circle at 100% -10%, rgba(255, 127, 80, 0.18) 0%, rgba(255, 127, 80, 0) 38%),
+    radial-gradient(circle at 0% 10%, rgba(255, 80, 124, 0.16) 0%, rgba(255, 80, 124, 0) 34%),
+    #15121d;
+  border-radius: 20px;
+  padding-bottom: 36px;
+}
+
+.container.losspulse .hero {
+  background: linear-gradient(130deg, rgba(55, 23, 35, 0.95), rgba(88, 21, 40, 0.93)), #2b1420;
+}
+
+.container.losspulse .pulse {
+  background: linear-gradient(128deg, rgba(64, 20, 38, 0.95), rgba(100, 25, 49, 0.9)), #401529;
+}
+
+.container.losspulse .kpi {
+  background: #1f1a29;
+  border-color: #3a304b;
+  color: #f2ecfa;
+}
+
+.container.losspulse .kpi-label,
+.container.losspulse .helper-text,
+.container.losspulse .nav-link,
+.container.losspulse .signal-meta,
+.container.losspulse .watchout-text,
+.container.losspulse .headline-meta {
+  color: #bcaed2;
+}
+
+.container.losspulse .panel {
+  background: #1c1824;
+  border-color: #342c44;
+  color: #f0ebf8;
+}
+
+.container.losspulse .note,
+.container.losspulse .headline,
+.container.losspulse .signal-item,
+.container.losspulse .watchout-item,
+.container.losspulse .mover,
+.container.losspulse .warning-item {
+  background: #241e30;
+  border-color: #3a304b;
+  color: #f0ebf8;
+}
+
+.container.losspulse .table-wrap table {
+  color: #f0ebf8;
 }
 
 .mono {
