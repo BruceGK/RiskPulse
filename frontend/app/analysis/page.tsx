@@ -8,6 +8,7 @@ import type { AnalysisResponse, Position } from "@/lib/types";
 
 const STORAGE_KEY = "riskpulse_positions";
 const UI_PREFS_KEY = "riskpulse_ui_v1";
+const THEME_MODE_KEY = "riskpulse_theme_mode";
 const UI_PREFS_MAX_AGE_MS = 1000 * 60 * 60 * 24 * 30;
 const DEMO_SAMPLE: Position[] = [
   { ticker: "AAPL", qty: 8, asset_type: "stock" },
@@ -181,6 +182,7 @@ export default function AnalysisPage() {
     let hasUrlShock = false;
     let hasUrlHoldingsView = false;
     let hasUrlLayout = false;
+    let hasUrlLossMode = false;
     try {
       const params = new URLSearchParams(window.location.search);
       const shared = decodeSharePayload(params.get("share"));
@@ -208,6 +210,7 @@ export default function AnalysisPage() {
         }
         if (typeof sharedLossMode === "boolean") {
           setLossMode(sharedLossMode);
+          hasUrlLossMode = true;
         }
         if (typeof shared.ui.scenario === "string" && shared.ui.scenario.trim().length > 0) {
           setActiveScenario(shared.ui.scenario.trim());
@@ -276,7 +279,11 @@ export default function AnalysisPage() {
       if (!hasUrlRail && isRailTab(savedRail)) setRailTab(savedRail);
       if (!hasUrlHoldingsView && isHoldingsView(savedHoldingsView)) setHoldingsView(savedHoldingsView);
       if (!hasUrlLayout && isLayoutMode(savedLayoutMode)) setLayoutMode(savedLayoutMode);
-      if (typeof savedLossMode === "boolean") setLossMode(savedLossMode);
+      if (!hasUrlLossMode && typeof savedLossMode === "boolean") setLossMode(savedLossMode);
+      const savedThemeMode = localStorage.getItem(THEME_MODE_KEY);
+      if (!hasUrlLossMode && (savedThemeMode === "losspulse" || savedThemeMode === "riskpulse")) {
+        setLossMode(savedThemeMode === "losspulse");
+      }
       if (!hasUrlScenario && typeof prefs.activeScenario === "string") setActiveScenario(prefs.activeScenario);
       if (!hasUrlShock && typeof prefs.scenarioScale === "number" && Number.isFinite(prefs.scenarioScale)) {
         setScenarioScale(Math.min(2, Math.max(0.5, prefs.scenarioScale)));
@@ -526,6 +533,7 @@ export default function AnalysisPage() {
       savedAt: Date.now(),
     };
     localStorage.setItem(UI_PREFS_KEY, JSON.stringify(payload));
+    localStorage.setItem(THEME_MODE_KEY, lossMode ? "losspulse" : "riskpulse");
   }, [activeTab, railTab, holdingsView, layoutMode, lossMode, activeScenario, scenarioScale, prefsHydrated]);
 
   const selectedScenario = scenarios.find((row) => row.id === activeScenario) || scenarios[0] || null;
@@ -652,9 +660,6 @@ export default function AnalysisPage() {
           <Link href="/portfolio" className="nav-link">
             Edit Portfolio
           </Link>
-          <button className={`btn ${lossMode ? "primary" : "secondary"}`} onClick={() => setLossMode((v) => !v)}>
-            {lossMode ? "Exit LossPulse" : "Enter LossPulse"}
-          </button>
           <button className="btn secondary" onClick={handleShareView} disabled={!positions.length}>
             Share View
           </button>

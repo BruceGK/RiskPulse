@@ -243,6 +243,12 @@ a {
   flex-wrap: wrap;
 }
 
+.theme-switch {
+  display: inline-flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
 .switch-chip {
   border: 1px solid #ccdae9;
   background: #f3f8ff;

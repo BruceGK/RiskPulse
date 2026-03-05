@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import type { Position } from "@/lib/types";
 
 const STORAGE_KEY = "riskpulse_positions";
+const THEME_MODE_KEY = "riskpulse_theme_mode";
 
 const SAMPLE: Position[] = [
   { ticker: "AAPL", qty: 8, asset_type: "stock" },
@@ -18,6 +19,7 @@ export default function PortfolioPage() {
   const [positions, setPositions] = useState<Position[]>([]);
   const [ticker, setTicker] = useState("");
   const [qty, setQty] = useState("1");
+  const [lossMode, setLossMode] = useState(false);
 
   useEffect(() => {
     const raw = localStorage.getItem(STORAGE_KEY);
@@ -32,6 +34,17 @@ export default function PortfolioPage() {
   useEffect(() => {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(positions));
   }, [positions]);
+
+  useEffect(() => {
+    const savedThemeMode = localStorage.getItem(THEME_MODE_KEY);
+    if (savedThemeMode === "losspulse") {
+      setLossMode(true);
+    }
+  }, []);
+
+  useEffect(() => {
+    localStorage.setItem(THEME_MODE_KEY, lossMode ? "losspulse" : "riskpulse");
+  }, [lossMode]);
 
   const totals = useMemo(() => {
     const totalQty = positions.reduce((sum, p) => sum + p.qty, 0);
@@ -52,11 +65,11 @@ export default function PortfolioPage() {
   const clearAll = () => setPositions([]);
 
   return (
-    <main className="container">
+    <main className={`container ${lossMode ? "losspulse" : ""}`}>
       <header className="topbar">
         <div className="brand">
           <span className="brand-dot" />
-          RiskPulse
+          {lossMode ? "LossPulse" : "RiskPulse"}
         </div>
         <button className="btn secondary" onClick={() => router.push("/analysis")} disabled={positions.length === 0}>
           Open Analysis
@@ -64,14 +77,17 @@ export default function PortfolioPage() {
       </header>
 
       <section className="hero">
-        <h1>Build your portfolio inputs and launch the risk engine.</h1>
+        <h1>{lossMode ? "Build your bag and optimize regret." : "Build your portfolio inputs and launch the risk engine."}</h1>
         <p className="hero-sub">
-          Enter symbols, set quantities, and run a single API-driven pass for concentration, macro context, and headline risk.
+          {lossMode
+            ? "Flip to parody mode for dark-humor coaching on bad habits, then open analysis to see the satire layer on real market data."
+            : "Enter symbols, set quantities, and run a single API-driven pass for concentration, macro context, and headline risk."}
         </p>
         <div className="hero-meta">
           <span className="pill">{positions.length} lines</span>
           <span className="pill">{totals.unique} unique tickers</span>
           <span className="pill">{totals.totalQty.toFixed(2)} total quantity</span>
+          <span className="pill">Mode {lossMode ? "LossPulse" : "RiskPulse"}</span>
         </div>
       </section>
 
@@ -108,9 +124,26 @@ export default function PortfolioPage() {
 
         <article className="panel slide-up">
           <h3>Session Controls</h3>
+          <div className="theme-switch" style={{ marginTop: 10 }}>
+            <button
+              className={`switch-chip ${!lossMode ? "active" : ""}`}
+              onClick={() => setLossMode(false)}
+              type="button"
+            >
+              RiskPulse Theme
+            </button>
+            <button
+              className={`switch-chip ${lossMode ? "active" : ""}`}
+              onClick={() => setLossMode(true)}
+              type="button"
+            >
+              LossPulse Theme
+            </button>
+          </div>
           <div className="notes" style={{ marginTop: 8 }}>
             <div className="note">Run analysis after adding positions to fetch market, macro, and news context.</div>
             <div className="note">Data is stored in browser local storage for quick iteration.</div>
+            {lossMode && <div className="note">Parody mode is satire: humor with real data for risk-awareness training.</div>}
           </div>
           <div className="hero-meta" style={{ marginTop: 14 }}>
             <button className="btn primary" onClick={() => router.push("/analysis")} disabled={positions.length === 0}>
