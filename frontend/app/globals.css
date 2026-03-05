@@ -1014,6 +1014,53 @@ tbody tr:hover {
   color: #f0ebf8;
 }
 
+.container.losspulse .muted {
+  color: #bcaed2;
+}
+
+.container.losspulse .switch-chip {
+  border-color: #4a3d61;
+  background: #2a2338;
+  color: #d8cdee;
+}
+
+.container.losspulse .switch-chip.active {
+  border-color: #7e65aa;
+  background: #463261;
+  color: #f7f1ff;
+}
+
+.container.losspulse .text-input {
+  background: #272033;
+  border-color: #44355b;
+  color: #f2ecfa;
+}
+
+.container.losspulse .text-input::placeholder {
+  color: #a392bf;
+}
+
+.container.losspulse .text-input:focus {
+  border-color: #8a72b5;
+  box-shadow: 0 0 0 3px rgba(138, 114, 181, 0.22);
+}
+
+.container.losspulse .btn.secondary {
+  background: #302645;
+  border-color: #53406f;
+  color: #e1d7f4;
+}
+
+.container.losspulse .btn.primary {
+  background: linear-gradient(120deg, #8a3a6c, #5e2f88);
+}
+
+.container.losspulse .btn.danger {
+  background: #42273a;
+  border-color: #754564;
+  color: #ffdbe9;
+}
+
 .container.losspulse .note,
 .container.losspulse .headline,
 .container.losspulse .signal-item,
@@ -1025,8 +1072,32 @@ tbody tr:hover {
   color: #f0ebf8;
 }
 
+.container.losspulse .table-wrap {
+  background: #221b2f;
+  border-color: #3a304b;
+}
+
 .container.losspulse .table-wrap table {
   color: #f0ebf8;
+}
+
+.container.losspulse th {
+  background: #302643;
+  color: #d2c6e7;
+  border-bottom-color: #433659;
+}
+
+.container.losspulse td {
+  color: #f0ebf8;
+  border-bottom-color: #3a304b;
+}
+
+.container.losspulse tbody tr:hover {
+  background: #2d243b;
+}
+
+.container.losspulse .loss-portfolio-panel {
+  background: linear-gradient(145deg, #241a32, #20182b);
 }
 
 .mono {

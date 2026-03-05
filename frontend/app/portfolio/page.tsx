@@ -14,6 +14,10 @@ const SAMPLE: Position[] = [
   { ticker: "SPY", qty: 6, asset_type: "etf" }
 ];
 
+function clamp01(value: number): number {
+  return Math.max(0, Math.min(1, value));
+}
+
 export default function PortfolioPage() {
   const router = useRouter();
   const [positions, setPositions] = useState<Position[]>([]);
@@ -52,6 +56,19 @@ export default function PortfolioPage() {
     return { totalQty, unique };
   }, [positions]);
 
+  const satire = useMemo(() => {
+    if (positions.length === 0 || totals.totalQty <= 0) {
+      return { regretPotential: 0, fomoLoad: 0, bagConcentration: 0 };
+    }
+    const maxQty = positions.reduce((m, p) => Math.max(m, p.qty), 0);
+    const techNames = new Set(["AAPL", "MSFT", "NVDA", "TSLA", "META", "AMD", "COIN", "PLTR"]);
+    const techCount = positions.reduce((sum, p) => sum + (techNames.has(p.ticker) ? 1 : 0), 0);
+    const bagConcentration = clamp01(maxQty / totals.totalQty);
+    const fomoLoad = clamp01(techCount / positions.length);
+    const regretPotential = clamp01((bagConcentration * 0.62) + (fomoLoad * 0.38));
+    return { regretPotential, fomoLoad, bagConcentration };
+  }, [positions, totals.totalQty]);
+
   const addPosition = () => {
     const symbol = ticker.toUpperCase().trim();
     const parsedQty = Number(qty);
@@ -72,7 +89,7 @@ export default function PortfolioPage() {
           {lossMode ? "LossPulse" : "RiskPulse"}
         </div>
         <button className="btn secondary" onClick={() => router.push("/analysis")} disabled={positions.length === 0}>
-          Open Analysis
+          {lossMode ? "Open Doom Desk" : "Open Analysis"}
         </button>
       </header>
 
@@ -93,9 +110,9 @@ export default function PortfolioPage() {
 
       <section className="grid two">
         <article className="panel slide-up">
-          <h3>Add Position</h3>
+          <h3>{lossMode ? "Add Future Bagholder" : "Add Position"}</h3>
           <p className="muted" style={{ marginBottom: 12 }}>
-            Symbols auto-normalize to uppercase.
+            {lossMode ? "Symbols auto-normalize before financial self-sabotage." : "Symbols auto-normalize to uppercase."}
           </p>
           <div className="form-grid">
             <input
@@ -114,10 +131,10 @@ export default function PortfolioPage() {
               placeholder="Quantity"
             />
             <button className="btn primary" onClick={addPosition}>
-              Add
+              {lossMode ? "Buy The Top" : "Add"}
             </button>
             <button className="btn secondary" onClick={useSamples}>
-              Load Sample
+              {lossMode ? "Load Doom Basket" : "Load Sample"}
             </button>
           </div>
         </article>
@@ -141,26 +158,64 @@ export default function PortfolioPage() {
             </button>
           </div>
           <div className="notes" style={{ marginTop: 8 }}>
-            <div className="note">Run analysis after adding positions to fetch market, macro, and news context.</div>
-            <div className="note">Data is stored in browser local storage for quick iteration.</div>
+            <div className="note">
+              {lossMode
+                ? "Run analysis to score your regret velocity, concentration pain, and headline-induced panic."
+                : "Run analysis after adding positions to fetch market, macro, and news context."}
+            </div>
+            <div className="note">
+              {lossMode
+                ? "Data is stored in browser local storage so your bad ideas survive refresh."
+                : "Data is stored in browser local storage for quick iteration."}
+            </div>
             {lossMode && <div className="note">Parody mode is satire: humor with real data for risk-awareness training.</div>}
           </div>
           <div className="hero-meta" style={{ marginTop: 14 }}>
             <button className="btn primary" onClick={() => router.push("/analysis")} disabled={positions.length === 0}>
-              Run Analysis
+              {lossMode ? "Run Loss Analysis" : "Run Analysis"}
             </button>
             <button className="btn danger" onClick={clearAll} disabled={positions.length === 0}>
-              Clear
+              {lossMode ? "Nuke Portfolio" : "Clear"}
             </button>
           </div>
         </article>
       </section>
 
+      {lossMode && (
+        <section className="panel loss-portfolio-panel" style={{ marginTop: 14 }}>
+          <h3>Capital Destruction Dashboard</h3>
+          <div className="grid cards" style={{ marginTop: 10 }}>
+            <article className="kpi">
+              <div className="kpi-label">Regret Potential</div>
+              <div className="kpi-value">{(satire.regretPotential * 100).toFixed(1)}%</div>
+            </article>
+            <article className="kpi">
+              <div className="kpi-label">FOMO Load</div>
+              <div className="kpi-value">{(satire.fomoLoad * 100).toFixed(1)}%</div>
+            </article>
+            <article className="kpi">
+              <div className="kpi-label">Bag Concentration</div>
+              <div className="kpi-value">{(satire.bagConcentration * 100).toFixed(1)}%</div>
+            </article>
+            <article className="kpi">
+              <div className="kpi-label">Strategy Quality</div>
+              <div className="kpi-value">
+                {satire.regretPotential > 0.7 ? "catastrophic" : satire.regretPotential > 0.45 ? "questionable" : "surprisingly decent"}
+              </div>
+            </article>
+          </div>
+          <div className="notes" style={{ marginTop: 10 }}>
+            <div className="note">Suggested process: buy euphoric spikes, deny risk, then panic-sell drawdowns.</div>
+            <div className="note">Inverse this playbook for actual investing discipline.</div>
+          </div>
+        </section>
+      )}
+
       <section className="panel" style={{ marginTop: 14 }}>
-        <h3>Current Positions</h3>
+        <h3>{lossMode ? "Current Bags" : "Current Positions"}</h3>
         {positions.length === 0 ? (
           <div className="status" style={{ marginTop: 10 }}>
-            No positions yet. Add symbols above or load sample data.
+            {lossMode ? "No bags yet. Add symbols above or load a prebuilt regret basket." : "No positions yet. Add symbols above or load sample data."}
           </div>
         ) : (
           <div className="table-wrap" style={{ marginTop: 12 }}>
@@ -181,7 +236,7 @@ export default function PortfolioPage() {
                     <td>{position.asset_type || "stock"}</td>
                     <td>
                       <button className="btn danger" onClick={() => setPositions((prev) => prev.filter((_, i) => i !== index))}>
-                        Remove
+                        {lossMode ? "Dump" : "Remove"}
                       </button>
                     </td>
                   </tr>
