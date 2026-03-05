@@ -19,10 +19,12 @@ RiskPulse is an Azure-ready portfolio intelligence app that combines market data
   - concentration, volatility, drawdown, regime, and scenario outputs
   - ticker intelligence (tech state, value view, action bias, confidence)
   - headline/event integration for macro and holdings
+  - macro release surprise interpretation (`actual vs forecast`) with plain-English impact and portfolio readthrough
 - Data provider strategy:
   - resilient fallback chain across multiple providers (market, macro, news)
   - in-memory TTL caching and free-tier throttle guards
   - provider coverage telemetry returned in API metadata
+  - macro calendar support via OpenBB and optional TradingEconomics fallback
 - AI layer:
   - transforms model outputs into a concise market pulse, warnings, and watchouts
   - designed to be optional/fail-open when AI is unavailable
@@ -77,6 +79,7 @@ This repository includes GitHub Actions workflows for frontend and backend deplo
 - Keep backend provider integrations modular and fail-open.
 - Treat AI output as an explanation layer on top of deterministic signals.
 - Validate all external provider payloads and track coverage in `meta.providers`.
+- Optional macro calendar knobs: `OPENBB_MACRO_PROVIDER`, `TRADING_ECONOMICS_API_KEY`.
 
 ## Next Product Steps
 - persistent portfolio storage and user auth

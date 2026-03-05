@@ -103,7 +103,7 @@ class AnalysisService:
                 notes.append(f"Missing market data for: {ticker_list}")
             notes.append("Quick pass loaded. Deep analysis, news, and AI signals are still loading.")
             data_quality = self._build_data_quality(req, position_rows, macro, news)
-            signals = self._build_signals(position_rows, notes, news, risk, macro, behavioral)
+            signals = self._build_signals(position_rows, notes, news, risk, macro, behavioral, macro_events=[])
             meta_payload: dict = {
                 "providers": {
                     "polygon_enabled": bool(self.settings.polygon_api_key),
@@ -112,6 +112,7 @@ class AnalysisService:
                     "fmp_enabled": bool(self.settings.fmp_api_key),
                     "alpha_vantage_enabled": bool(self.settings.alpha_vantage_api_key),
                     "openbb_enabled": bool(self.settings.openbb_base_url),
+                    "tradingeconomics_enabled": bool(self.settings.trading_economics_api_key),
                     "yahoo_enabled": True,
                     "openai_enabled": bool(self.settings.openai_api_key),
                 },
@@ -138,8 +139,12 @@ class AnalysisService:
                 meta=meta_payload,
             )
 
-        risk = await self._compute_risk(position_rows)
-        news = await self._build_news_payload(position_rows)
+        risk_task = asyncio.create_task(self._compute_risk(position_rows))
+        news_task = asyncio.create_task(self._build_news_payload(position_rows))
+        macro_events_task = asyncio.create_task(self.openbb.get_macro_calendar(limit=20, country="United States"))
+        risk, news, macro_events = await asyncio.gather(risk_task, news_task, macro_events_task)
+        if not isinstance(macro_events, list):
+            macro_events = []
         try:
             behavioral = await self._build_behavioral_intel(position_rows, news, macro)
         except Exception:
@@ -167,7 +172,7 @@ class AnalysisService:
                 f"Risk metrics computed on top {self.settings.max_positions_for_risk} holdings by market value."
             )
         data_quality = self._build_data_quality(req, position_rows, macro, news)
-        deterministic_signals = self._build_signals(position_rows, notes, news, risk, macro, behavioral)
+        deterministic_signals = self._build_signals(position_rows, notes, news, risk, macro, behavioral, macro_events=macro_events)
         ai_signals = await self.ai.build_signals(
             {
                 "asOf": date.today().isoformat(),
@@ -178,6 +183,7 @@ class AnalysisService:
                 "notes": notes[:6],
                 "behavioral": behavioral,
                 "macroNews": [h.model_dump() for h in news.get("macro", [])[:8]],
+                "macroCalendar": macro_events[:8],
                 "tickerNews": {
                     ticker: [h.model_dump() for h in items[:3]]
                     for ticker, items in news.items()
@@ -195,6 +201,7 @@ class AnalysisService:
                 "fmp_enabled": bool(self.settings.fmp_api_key),
                 "alpha_vantage_enabled": bool(self.settings.alpha_vantage_api_key),
                 "openbb_enabled": bool(self.settings.openbb_base_url),
+                "tradingeconomics_enabled": bool(self.settings.trading_economics_api_key),
                 "yahoo_enabled": True,
                 "openai_enabled": bool(self.settings.openai_api_key),
             },
@@ -657,6 +664,7 @@ class AnalysisService:
         risk: dict[str, float | None],
         macro: dict[str, MacroPoint],
         behavioral: dict[str, Any],
+        macro_events: list[dict[str, Any]],
     ) -> dict[str, Any]:
         top_tickers = [p.ticker for p in positions[:5]]
         radar = self._build_headline_radar(news, top_tickers)
@@ -671,7 +679,7 @@ class AnalysisService:
             macro=macro,
             risk=risk,
         )
-        macro_context = _build_macro_context(macro, news.get("macro", []), positions)
+        macro_context = _build_macro_context(macro, news.get("macro", []), positions, macro_events)
         theme_board = _build_theme_board(radar, behavioral)
         return {
             "pulse": pulse,
@@ -1975,16 +1983,20 @@ def _build_macro_context(
     macro: dict[str, MacroPoint],
     macro_news: list[Headline],
     positions: list[PositionAnalysis],
+    macro_events: list[dict[str, Any]],
 ) -> dict[str, Any]:
     drivers = _macro_driver_rows(macro)
-    event_readthrough = _macro_event_readthrough(macro_news)
-    implications = _macro_portfolio_implications(drivers, event_readthrough, positions)
-    summary, regime_bias = _macro_context_summary(drivers, event_readthrough, implications)
+    release_highlights = _macro_release_readthrough(macro_events)
+    headline_readthrough = _macro_event_readthrough(macro_news)
+    merged_event_lens = [*release_highlights, *headline_readthrough]
+    implications = _macro_portfolio_implications(drivers, merged_event_lens, positions)
+    summary, regime_bias = _macro_context_summary(drivers, merged_event_lens, implications)
     return {
         "summary": summary,
         "regimeBias": regime_bias,
         "drivers": drivers[:6],
-        "eventReadthrough": event_readthrough[:4],
+        "releaseHighlights": release_highlights[:4],
+        "eventReadthrough": headline_readthrough[:4],
         "portfolioImplications": implications[:4],
     }
 
@@ -2181,6 +2193,143 @@ def _macro_driver_rows(macro: dict[str, MacroPoint]) -> list[dict[str, Any]]:
     return rows
 
 
+def _macro_release_readthrough(macro_events: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for row in macro_events[:60]:
+        if not isinstance(row, dict):
+            continue
+        event = str(row.get("event") or "").strip()
+        if not event:
+            continue
+        theme = _macro_event_theme(event)
+        if not theme:
+            continue
+        event_key = event.lower()
+        if event_key in seen:
+            continue
+        seen.add(event_key)
+        actual = _as_float(row.get("actual"))
+        forecast = _as_float(row.get("forecast"))
+        previous = _as_float(row.get("previous"))
+        surprise = None
+        surprise_pct = None
+        signal = "neutral"
+        if actual is not None and forecast is not None:
+            surprise = actual - forecast
+            denom = max(abs(forecast), abs(previous or 0.0), 1e-6)
+            surprise_pct = surprise / denom
+            polarity = _macro_release_polarity(theme, event)
+            if polarity > 0:
+                signal = "risk-up" if surprise > 0 else "risk-down" if surprise < 0 else "neutral"
+            elif polarity < 0:
+                signal = "risk-up" if surprise < 0 else "risk-down" if surprise > 0 else "neutral"
+            else:
+                signal = "risk-up" if (surprise_pct or 0.0) > 0.12 else "risk-down" if (surprise_pct or 0.0) < -0.12 else "neutral"
+        importance = int(row.get("importance") or 2)
+        out.append(
+            {
+                "kind": "release",
+                "theme": theme.replace("-", " ").title(),
+                "event": event,
+                "country": str(row.get("country") or "Unknown"),
+                "date": row.get("date"),
+                "signal": signal,
+                "impact": "high" if importance >= 3 else "medium" if importance == 2 else "low",
+                "importance": importance,
+                "actual": actual,
+                "forecast": forecast,
+                "previous": previous,
+                "actualText": row.get("actualText"),
+                "forecastText": row.get("forecastText"),
+                "previousText": row.get("previousText"),
+                "surprise": surprise,
+                "surprisePct": surprise_pct,
+                "meaning": _macro_release_meaning(theme, signal, event, surprise, surprise_pct),
+            }
+        )
+    out.sort(
+        key=lambda row: (
+            bool(row.get("surprise") is not None),
+            int(row.get("importance") or 1),
+            _release_recency_score(row.get("date")),
+        ),
+        reverse=True,
+    )
+    return out
+
+
+def _release_recency_score(value: Any) -> float:
+    if not isinstance(value, str):
+        return 0.0
+    dt = _parse_datetime(value)
+    if dt is None:
+        return 0.0
+    now = datetime.now(tz=UTC)
+    age_hours = (now - dt).total_seconds() / 3600.0
+    if age_hours < -2:
+        return 0.25  # upcoming release
+    if age_hours <= 24:
+        return 1.0
+    if age_hours <= 72:
+        return 0.8
+    if age_hours <= 168:
+        return 0.55
+    return 0.3
+
+
+def _macro_release_polarity(theme: str, event: str) -> int:
+    lower = event.lower()
+    if theme == "inflation":
+        return 1
+    if theme == "policy":
+        return 1
+    if theme == "growth":
+        return -1
+    if theme == "labor":
+        if "unemployment" in lower or "jobless" in lower or "claims" in lower:
+            return 1
+        return -1
+    if theme == "energy":
+        return 0
+    return 0
+
+
+def _macro_release_meaning(theme: str, signal: str, event: str, surprise: float | None, surprise_pct: float | None) -> str:
+    delta_text = ""
+    if surprise is not None:
+        delta_text = f" Surprise vs forecast: {surprise:+.3f}."
+    elif surprise_pct is not None:
+        delta_text = f" Surprise magnitude: {surprise_pct:+.1%}."
+
+    if theme == "inflation":
+        if signal == "risk-up":
+            return f"{event} printed hotter than expected.{delta_text} This can keep policy restrictive and pressure equity multiples."
+        if signal == "risk-down":
+            return f"{event} printed cooler than expected.{delta_text} This can ease rate pressure and support duration-sensitive assets."
+    if theme == "labor":
+        if signal == "risk-up":
+            return f"{event} skewed risk-up versus consensus.{delta_text} Labor surprise increases policy-path uncertainty."
+        if signal == "risk-down":
+            return f"{event} skewed risk-down versus consensus.{delta_text} Labor trend is less destabilizing for near-term risk."
+    if theme == "growth":
+        if signal == "risk-up":
+            return f"{event} surprised weaker versus expectations.{delta_text} Growth-sensitive risk appetite may soften."
+        if signal == "risk-down":
+            return f"{event} surprised stronger versus expectations.{delta_text} Cyclical risk sentiment can improve."
+    if theme == "policy":
+        if signal == "risk-up":
+            return f"{event} is interpreted as hawkish versus expectation.{delta_text} Liquidity conditions may tighten."
+        if signal == "risk-down":
+            return f"{event} is interpreted as dovish versus expectation.{delta_text} Discount-rate pressure may ease."
+    if theme == "energy":
+        if signal == "risk-up":
+            return f"{event} points to inflation-sensitive energy pressure.{delta_text} Watch inflation pass-through."
+        if signal == "risk-down":
+            return f"{event} indicates softer energy pressure.{delta_text} Inflation impulse may moderate."
+    return f"{event} is mixed against consensus.{delta_text} Wait for cross-asset confirmation before changing risk posture."
+
+
 def _macro_event_readthrough(macro_news: list[Headline]) -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
     seen_themes: set[str] = set()
@@ -2192,10 +2341,12 @@ def _macro_event_readthrough(macro_news: list[Headline]) -> list[dict[str, Any]]
         seen_themes.add(theme)
         out.append(
             {
+                "kind": "headline",
                 "theme": theme.replace("-", " ").title(),
                 "signal": direction,
                 "impact": impact,
                 "headline": item.title,
+                "event": item.title,
                 "meaning": _macro_event_meaning(theme, direction),
             }
         )
@@ -2282,6 +2433,22 @@ def _macro_portfolio_implications(
     if policy_or_inflation_risk:
         out.append("Inflation/policy event flow is still hot; rate-sensitive equities need stronger valuation support.")
 
+    high_importance_release = next(
+        (
+            row
+            for row in event_readthrough
+            if isinstance(row, dict) and row.get("kind") == "release" and int(row.get("importance") or 0) >= 3 and row.get("signal") in {"risk-up", "risk-down"}
+        ),
+        None,
+    )
+    if isinstance(high_importance_release, dict):
+        event_name = str(high_importance_release.get("event") or "High-impact release")
+        event_signal = str(high_importance_release.get("signal") or "neutral")
+        if event_signal == "risk-up":
+            out.append(f"{event_name} was a high-impact risk-up release; keep gross risk tighter until follow-through confirms stability.")
+        elif event_signal == "risk-down":
+            out.append(f"{event_name} was a high-impact risk-down release; tactical adds can be considered if single-name setup aligns.")
+
     if not out:
         out.append("Macro impulse is balanced in this run; single-name alpha and valuation dispersion matter more than top-down risk.")
     return out
@@ -2325,6 +2492,11 @@ def _macro_context_summary(
 
     active_drivers = [str(row.get("driver")) for row in drivers if row.get("signal") != "neutral"][:3]
     active_themes = [str(row.get("theme")) for row in event_readthrough[:2]]
+    active_releases = [
+        str(row.get("event"))
+        for row in event_readthrough
+        if isinstance(row, dict) and row.get("kind") == "release" and isinstance(row.get("event"), str)
+    ][:2]
 
     if regime_bias == "risk-up":
         summary = "Macro readthrough is risk-up with tighter cross-asset conditions."
@@ -2337,6 +2509,8 @@ def _macro_context_summary(
         summary += f" Key drivers: {', '.join(active_drivers)}."
     if active_themes:
         summary += f" Event lens: {', '.join(active_themes)}."
+    if active_releases:
+        summary += f" Release lens: {', '.join(active_releases)}."
     if implications:
         summary += f" Portfolio focus: {implications[0]}"
     return summary[:420], regime_bias

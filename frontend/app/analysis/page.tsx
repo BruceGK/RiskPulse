@@ -415,6 +415,7 @@ export default function AnalysisPage() {
   const macroContextRegime = macroContext?.regimeBias === "risk-up" || macroContext?.regimeBias === "risk-down" ? macroContext.regimeBias : "balanced";
   const macroContextRegimeClass = macroContextRegime === "balanced" ? "neutral" : macroContextRegime;
   const macroContextDrivers = asRecordArray(macroContext?.drivers).slice(0, 6);
+  const macroContextReleases = asRecordArray(macroContext?.releaseHighlights).slice(0, 4);
   const macroContextEvents = asRecordArray(macroContext?.eventReadthrough).slice(0, 4);
   const macroContextImplications = asStringArray(macroContext?.portfolioImplications).slice(0, 4);
   const holdingsColSpan =
@@ -896,6 +897,37 @@ export default function AnalysisPage() {
                                 </div>
                                 {meaning && <div className="signal-text">{meaning}</div>}
                                 {playbook && <div className="signal-meta">{playbook}</div>}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                      {macroContextReleases.length > 0 && (
+                        <div className="macro-release-grid">
+                          {macroContextReleases.map((row, idx) => {
+                            const event = typeof row.event === "string" ? row.event : `Release ${idx + 1}`;
+                            const signal = row.signal === "risk-up" || row.signal === "risk-down" ? row.signal : "neutral";
+                            const importance = asNumber(row.importance);
+                            const surprise = asNumber(row.surprise);
+                            const actual = asNumber(row.actual);
+                            const forecast = asNumber(row.forecast);
+                            const actualText = typeof row.actualText === "string" ? row.actualText : null;
+                            const forecastText = typeof row.forecastText === "string" ? row.forecastText : null;
+                            const meaning = typeof row.meaning === "string" ? row.meaning : "";
+                            const date = typeof row.date === "string" ? row.date : "-";
+                            return (
+                              <div className="signal-item macro-release" key={`${event}-${idx}`}>
+                                <div className="signal-head">
+                                  <strong>{event}</strong>
+                                  <span className={`dir ${signal}`}>{signal}</span>
+                                </div>
+                                <div className="signal-meta">
+                                  {date} · importance {importance ? `${importance}/3` : "-"}
+                                </div>
+                                <div className="signal-meta">
+                                  actual {actual !== null ? actual.toFixed(3) : actualText || "-"} · forecast {forecast !== null ? forecast.toFixed(3) : forecastText || "-"} · surprise {surprise === null ? "-" : surprise.toFixed(3)}
+                                </div>
+                                {meaning && <div className="signal-text">{meaning}</div>}
                               </div>
                             );
                           })}

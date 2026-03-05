@@ -31,6 +31,8 @@ class Settings(BaseSettings):
     newsapi_api_key: str = ""
     openbb_base_url: str = ""
     openbb_provider: str = "yfinance"
+    openbb_macro_provider: str = "tradingeconomics"
+    trading_economics_api_key: str = ""
     openai_api_key: str = ""
     openai_model: str = "gpt-4.1-nano"
     ai_cache_ttl_seconds: int = 1800

@@ -258,6 +258,25 @@ class OpenBBProvider:
             )
         return out
 
+    async def get_macro_calendar(self, limit: int = 20, country: str = "United States") -> list[dict[str, Any]]:
+        rows: list[dict[str, Any]] = []
+        if self.enabled:
+            payload = await self._fetch(
+                "/api/v1/economy/calendar",
+                {
+                    "provider": self.settings.openbb_macro_provider or "tradingeconomics",
+                    "country": country,
+                    "limit": max(5, min(80, limit)),
+                },
+            )
+            rows = [_normalize_macro_event_row(row, source="openbb") for row in _rows(payload)]
+            rows = [row for row in rows if row]
+        if rows:
+            return rows[:limit]
+        if self.settings.trading_economics_api_key:
+            return await self._fetch_trading_economics_calendar(limit=limit, country=country)
+        return []
+
     async def _fetch(self, path: str, params: dict[str, Any]) -> Any:
         if not self.enabled:
             return None
@@ -271,6 +290,24 @@ class OpenBBProvider:
                 return resp.json()
         except Exception:
             return None
+
+    async def _fetch_trading_economics_calendar(self, limit: int, country: str) -> list[dict[str, Any]]:
+        key = self.settings.trading_economics_api_key.strip()
+        if not key:
+            return []
+        params = {"c": key, "f": "json"}
+        if country:
+            params["country"] = country
+        try:
+            async with httpx.AsyncClient(timeout=self.settings.request_timeout_seconds) as client:
+                resp = await client.get("https://api.tradingeconomics.com/calendar", params=params)
+                resp.raise_for_status()
+                payload = resp.json()
+            rows = _rows(payload)
+            out = [_normalize_macro_event_row(row, source="tradingeconomics") for row in rows]
+            return [row for row in out if row][:limit]
+        except Exception:
+            return []
 
     async def _fetch_alpha_vantage_overview(self, symbol: str) -> dict[str, Any] | None:
         if not self.settings.alpha_vantage_api_key:
@@ -470,6 +507,66 @@ def _floatish(value: Any) -> float | None:
         if match:
             return _float_or_none(match.group(0))
     return None
+
+
+def _parse_importance(value: Any) -> int:
+    if isinstance(value, (int, float)):
+        n = int(value)
+        return max(1, min(3, n))
+    if isinstance(value, str):
+        text = value.strip().lower()
+        if not text:
+            return 2
+        if text in {"high", "3", "★★★", "***"}:
+            return 3
+        if text in {"medium", "med", "2", "★★", "**"}:
+            return 2
+        if text in {"low", "1", "★", "*"}:
+            return 1
+        parsed = _float_or_none(text)
+        if parsed is not None:
+            return max(1, min(3, int(parsed)))
+    return 2
+
+
+def _normalize_macro_event_row(row: dict[str, Any], source: str) -> dict[str, Any]:
+    event = str(
+        _first_value(
+            row,
+            (
+                "event",
+                "name",
+                "category",
+                "title",
+                "indicator",
+                "Calendar",
+                "Category",
+                "Event",
+            ),
+        )
+        or ""
+    ).strip()
+    if not event:
+        return {}
+    country = str(_first_value(row, ("country", "Country", "region", "Region")) or "").strip() or "Unknown"
+    date_value = _first_value(row, ("date", "Date", "release_date", "releaseDate", "datetime", "DateUtc", "time"))
+    date_text = str(date_value).strip() if date_value not in (None, "") else None
+    actual_raw = _first_value(row, ("actual", "Actual", "actual_value", "value"))
+    forecast_raw = _first_value(row, ("forecast", "Forecast", "consensus", "expected"))
+    previous_raw = _first_value(row, ("previous", "Previous", "prior"))
+    return {
+        "event": event,
+        "country": country,
+        "date": date_text,
+        "actual": _floatish(actual_raw),
+        "forecast": _floatish(forecast_raw),
+        "previous": _floatish(previous_raw),
+        "actualText": str(actual_raw).strip() if actual_raw not in (None, "") else None,
+        "forecastText": str(forecast_raw).strip() if forecast_raw not in (None, "") else None,
+        "previousText": str(previous_raw).strip() if previous_raw not in (None, "") else None,
+        "importance": _parse_importance(_first_value(row, ("importance", "Importance", "importance_rating", "importanceLabel"))),
+        "source": source,
+    }
 
 
 def _options_put_call(rows: list[dict[str, Any]]) -> float | None:

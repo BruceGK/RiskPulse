@@ -660,6 +660,16 @@ a {
   gap: 6px;
 }
 
+.macro-release-grid {
+  margin-top: 10px;
+  display: grid;
+  gap: 8px;
+}
+
+.signal-item.macro-release {
+  border-left: 4px solid #4f78d2;
+}
+
 .grid {
   display: grid;
   gap: 14px;
