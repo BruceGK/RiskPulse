@@ -100,6 +100,13 @@ export default function PortfolioPage() {
             ? "Flip to LossPulse and route your portfolio through pure chaos analytics."
             : "Enter symbols, set quantities, and run a single API-driven pass for concentration, macro context, and headline risk."}
         </p>
+        <p className="hero-sub research-note">
+          Analysis framework backed by research from{" "}
+          <a href="https://shitjournal.org" target="_blank" rel="noreferrer" className="research-link">
+            S.H.I.T Journal
+          </a>
+          .
+        </p>
         <div className="hero-meta">
           <span className="pill">{positions.length} lines</span>
           <span className="pill">{totals.unique} unique tickers</span>

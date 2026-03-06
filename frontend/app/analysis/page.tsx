@@ -726,6 +726,13 @@ export default function AnalysisPage() {
             ? "Optimizing capital destruction with professional-grade bad decisions."
             : "Multi-model risk engine with forecast, action book, and instant news context."}
         </p>
+        <p className="hero-sub research-note">
+          Analysis framework backed by research from{" "}
+          <a href="https://shitjournal.org" target="_blank" rel="noreferrer" className="research-link">
+            S.H.I.T Journal
+          </a>
+          .
+        </p>
         {analysis && (
           <div className="hero-meta">
             <span className="pill">As of {analysis.as_of}</span>

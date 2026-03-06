@@ -142,6 +142,18 @@ a {
   max-width: 730px;
 }
 
+.research-note {
+  margin-top: 8px;
+  font-size: 0.88rem;
+}
+
+.research-link {
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  color: #d6e8ff;
+  font-weight: 600;
+}
+
 .hero-meta {
   display: flex;
   gap: 10px;
