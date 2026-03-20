@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import { analyzePortfolio } from "@/lib/api";
 import type { AnalysisResponse, Position } from "@/lib/types";
@@ -121,6 +121,90 @@ function normalizePositions(value: unknown): Position[] {
     out.push({ ticker, qty, asset_type: assetType });
   }
   return out;
+}
+
+function valuationMethodName(name: string): string {
+  switch (name) {
+    case "analyst_consensus":
+      return "Analyst consensus target";
+    case "fcf_cap_model":
+      return "Free-cash-flow yield model";
+    case "pe_relative":
+      return "Relative P/E model";
+    case "ev_ebitda_relative":
+      return "Relative EV/EBITDA model";
+    case "pb_relative":
+      return "Relative price-to-book model";
+    case "graham_number":
+      return "Graham number";
+    case "etf_nav_not_modeled":
+      return "ETF/fund valuation withheld";
+    case "insufficient_valuation_inputs":
+      return "Insufficient valuation inputs";
+    default:
+      return name.replaceAll("_", " ");
+  }
+}
+
+function valuationExplainSummary(valuation: Record<string, unknown> | null, openbb: Record<string, unknown> | null): string {
+  const asset = asRecord(openbb?.asset);
+  const isEtf = asset?.isEtf === true;
+  const isFund = asset?.isFund === true;
+  const verdict = typeof valuation?.verdict === "string" ? valuation.verdict : "unknown";
+  if (isEtf || isFund) {
+    return "Fair value is intentionally withheld for ETFs and funds. This model does not yet estimate NAV or holdings-level intrinsic value.";
+  }
+  if (verdict === "unknown") {
+    return "Fair value is withheld unless the model has enough evidence. It now requires multiple valuation methods and sufficient input coverage before showing a number.";
+  }
+  return "Fair value is a blended estimate built from analyst target, free-cash-flow yield, relative multiples, and Graham-style value checks when available. The final number is stabilized with a median blend to reduce outlier distortion.";
+}
+
+function HoldingsHeaderInfo({ label, tip }: { label: string; tip: string }) {
+  const [open, setOpen] = useState(false);
+  const timerRef = useRef<number | null>(null);
+
+  const clearTimer = () => {
+    if (timerRef.current !== null) {
+      window.clearTimeout(timerRef.current);
+      timerRef.current = null;
+    }
+  };
+
+  const startTimer = () => {
+    clearTimer();
+    timerRef.current = window.setTimeout(() => setOpen(true), 2000);
+  };
+
+  useEffect(() => () => clearTimer(), []);
+
+  return (
+    <span className="th-with-info">
+      <span>{label}</span>
+      <button
+        type="button"
+        className="tooltip-trigger"
+        aria-label={`${label} explanation`}
+        onMouseEnter={startTimer}
+        onMouseLeave={() => {
+          clearTimer();
+          setOpen(false);
+        }}
+        onFocus={startTimer}
+        onBlur={() => {
+          clearTimer();
+          setOpen(false);
+        }}
+        onClick={() => {
+          clearTimer();
+          setOpen((prev) => !prev);
+        }}
+      >
+        i
+      </button>
+      {open && <span className="tooltip-popover">{tip}</span>}
+    </span>
+  );
 }
 
 function encodeSharePayload(payload: SharePayload): string {
@@ -1620,9 +1704,19 @@ export default function AnalysisPage() {
                               {effectiveHoldingsView === "essentials" && (
                                 <>
                                   <th>Conviction</th>
-                                  <th>Value View</th>
+                                  <th>
+                                    <HoldingsHeaderInfo
+                                      label="Value View"
+                                      tip="The model's valuation verdict. 'Unknown' means there was not enough evidence, or the asset is an ETF/fund that we do not intrinsically value yet."
+                                    />
+                                  </th>
                                   <th>Tech State</th>
-                                  <th>MoS</th>
+                                  <th>
+                                    <HoldingsHeaderInfo
+                                      label="MoS"
+                                      tip="Margin of Safety: (fair value / current price) - 1. Positive means the stock screens below modeled fair value; negative means above. Hidden when fair value confidence is insufficient."
+                                    />
+                                  </th>
                                   <th>Opportunity</th>
                                   <th>Details</th>
                                 </>
@@ -1645,9 +1739,24 @@ export default function AnalysisPage() {
                                   <th>RSI</th>
                                   <th>ADX</th>
                                   <th>Value View</th>
-                                  <th>Val Inputs</th>
-                                  <th>Fair Value</th>
-                                  <th>MoS</th>
+                                  <th>
+                                    <HoldingsHeaderInfo
+                                      label="Val Inputs"
+                                      tip="Count of valuation inputs available to the backend, such as P/E, EV/EBITDA, free-cash-flow yield, ROE, growth, target price, EPS, and book value."
+                                    />
+                                  </th>
+                                  <th>
+                                    <HoldingsHeaderInfo
+                                      label="Fair Value"
+                                      tip="A blended estimate from multiple valuation methods. The app only shows it when there are enough independent methods and inputs to support a number."
+                                    />
+                                  </th>
+                                  <th>
+                                    <HoldingsHeaderInfo
+                                      label="MoS"
+                                      tip="Margin of Safety: percentage gap between modeled fair value and spot price. It is withheld when fair value is withheld."
+                                    />
+                                  </th>
                                   <th>Opportunity</th>
                                   <th>Distribution</th>
                                   <th>Panic</th>
@@ -1668,6 +1777,7 @@ export default function AnalysisPage() {
                               const valuation = asRecord(row.valuation);
                               const openbb = asRecord(row.openbb);
                               const technical = asRecord(row.technical);
+                              const asset = asRecord(openbb?.asset);
                               const coverage = asRecord(openbb?.coverage);
                               const fairValue = asNumber(valuation?.fairValue);
                               const marginSafety = asNumber(valuation?.marginSafety);
@@ -1680,6 +1790,8 @@ export default function AnalysisPage() {
                               const rationale = typeof row.rationale === "string" ? row.rationale : "";
                               const confidence = asNumber(row.confidence);
                               const themes = asStringArray(row.themes).slice(0, 2).join(", ") || "-";
+                              const valuationMethods = asRecordArray(valuation?.methods);
+                              const valuationExplain = valuationExplainSummary(valuation, openbb);
                               const conviction = convictionLabel(row);
                               const convictionView = displaySeverity(conviction.cls);
                               const isExpanded = expandedTicker === ticker;
@@ -1752,6 +1864,20 @@ export default function AnalysisPage() {
                                             <div className="note">Fair value {money(fairValue)} · margin {pct(marginSafety)}</div>
                                             <div className="note">Input coverage {valInputs === null ? "-" : `${valInputs.toFixed(0)} factors`}</div>
                                             <div className="note">Value view {valueView}</div>
+                                            {asset && (
+                                              <div className="note">
+                                                Asset type {String(asset.quoteType || (asset.isEtf ? "ETF" : asset.isFund ? "Fund" : "Equity"))}
+                                              </div>
+                                            )}
+                                          </div>
+                                          <div>
+                                            <div className="kpi-label">How Fair Value Is Built</div>
+                                            <div className="note">{valuationExplain}</div>
+                                            {valuationMethods.length > 0 && (
+                                              <div className="note">
+                                                Methods {valuationMethods.map((method) => valuationMethodName(String(method.name || "unknown"))).join(" · ")}
+                                              </div>
+                                            )}
                                           </div>
                                           <div>
                                             <div className="kpi-label">Technicals</div>

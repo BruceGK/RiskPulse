@@ -1489,6 +1489,55 @@ th {
   letter-spacing: 0.03em;
 }
 
+.th-with-info {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.tooltip-trigger {
+  width: 18px;
+  height: 18px;
+  border: none;
+  border-radius: 999px;
+  background: #262628;
+  color: var(--muted);
+  font-family: var(--font-mono), monospace;
+  font-size: 0.7rem;
+  font-weight: 700;
+  line-height: 1;
+  cursor: help;
+  display: inline-grid;
+  place-items: center;
+}
+
+.tooltip-trigger:hover,
+.tooltip-trigger:focus-visible {
+  background: #313134;
+  color: var(--ink);
+  outline: none;
+}
+
+.tooltip-popover {
+  position: absolute;
+  top: calc(100% + 10px);
+  left: 0;
+  z-index: 30;
+  width: 260px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: rgba(20, 20, 22, 0.97);
+  box-shadow: 0 16px 36px rgba(0, 0, 0, 0.38);
+  color: #e3e6ea;
+  font-size: 0.78rem;
+  font-weight: 500;
+  line-height: 1.45;
+  text-transform: none;
+  letter-spacing: 0;
+  white-space: normal;
+}
+
 tbody tr:hover {
   background: #181719;
 }
@@ -1714,6 +1763,22 @@ tbody tr:hover {
 
 .container.losspulse .status {
   background: #2a2239;
+  color: #f0e9fd;
+}
+
+.container.losspulse .tooltip-trigger {
+  background: #342c44;
+  color: #d8cdee;
+}
+
+.container.losspulse .tooltip-trigger:hover,
+.container.losspulse .tooltip-trigger:focus-visible {
+  background: #463261;
+  color: #fff2ff;
+}
+
+.container.losspulse .tooltip-popover {
+  background: rgba(33, 24, 46, 0.98);
   color: #f0e9fd;
 }
 
