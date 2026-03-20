@@ -426,6 +426,7 @@ class AnalysisService:
             news_stats = _ticker_news_stats(ticker_news)
             valuation_intel = _valuation_intel(openbb, p.price)
             openbb_scores = _openbb_scores(openbb, valuation_intel)
+            valuation_margin = _as_float(valuation_intel.get("marginSafety"))
 
             ret20 = metrics.get("ret20")
             spy_ret20 = spy_metrics.get("ret20")
@@ -500,7 +501,7 @@ class AnalysisService:
                 distribution_index,
                 macro_panic,
                 news_stats["eventRisk"],
-                valuation_intel["marginSafety"],
+                valuation_margin,
             )
             rationale = _action_rationale(
                 action_bias=action_bias,
@@ -511,7 +512,7 @@ class AnalysisService:
                 risk_up_share=news_stats["riskUpShare"],
                 risk_down_share=news_stats["riskDownShare"],
                 relative_20=relative_20,
-                margin_safety=valuation_intel["marginSafety"],
+                margin_safety=valuation_margin,
             )
 
             intel_row = {
@@ -556,7 +557,12 @@ class AnalysisService:
 
             if (
                 (opportunity_index >= 0.67 and confidence >= 0.45)
-                or (valuation_intel["marginSafety"] >= 0.12 and valuation_intel["confidence"] >= 0.4 and news_stats["eventRisk"] < 0.75)
+                or (
+                    valuation_margin is not None
+                    and valuation_margin >= 0.12
+                    and valuation_intel["confidence"] >= 0.4
+                    and news_stats["eventRisk"] < 0.75
+                )
             ):
                 opp_reason = rationale
                 fair_value = valuation_intel.get("fairValue")
@@ -569,13 +575,13 @@ class AnalysisService:
                         "ticker": p.ticker,
                         "score": round(max(opportunity_index, valuation_intel["undervaluationScore"]), 3),
                         "confidence": round(confidence, 3),
-                        "signal": "intrinsic-undervaluation" if valuation_intel["marginSafety"] >= 0.12 else "undervaluation-window",
+                        "signal": "intrinsic-undervaluation" if valuation_margin is not None and valuation_margin >= 0.12 else "undervaluation-window",
                         "reason": opp_reason,
                     }
                 )
             if (
                 (distribution_index >= 0.67 and confidence >= 0.45)
-                or (valuation_intel["marginSafety"] <= -0.12 and valuation_intel["confidence"] >= 0.4)
+                or (valuation_margin is not None and valuation_margin <= -0.12 and valuation_intel["confidence"] >= 0.4)
             ):
                 exit_reason = rationale
                 fair_value = valuation_intel.get("fairValue")
@@ -588,7 +594,7 @@ class AnalysisService:
                         "ticker": p.ticker,
                         "score": round(max(distribution_index, valuation_intel["overvaluationScore"]), 3),
                         "confidence": round(confidence, 3),
-                        "signal": "intrinsic-overvaluation" if valuation_intel["marginSafety"] <= -0.12 else "crowded-upside",
+                        "signal": "intrinsic-overvaluation" if valuation_margin is not None and valuation_margin <= -0.12 else "crowded-upside",
                         "reason": exit_reason,
                     }
                 )
@@ -1450,10 +1456,10 @@ def _signal_confidence(history_points: int, headline_count: int, relative_20: fl
     return _clamp01(base)
 
 
-def _action_bias(opportunity: float, distribution: float, macro_panic: float, event_risk: float, margin_safety: float) -> str:
-    if margin_safety >= 0.15 and macro_panic <= 0.9 and event_risk <= 0.82:
+def _action_bias(opportunity: float, distribution: float, macro_panic: float, event_risk: float, margin_safety: float | None) -> str:
+    if margin_safety is not None and margin_safety >= 0.15 and macro_panic <= 0.9 and event_risk <= 0.82:
         return "accumulate-on-weakness"
-    if margin_safety <= -0.12 and distribution >= 0.55:
+    if margin_safety is not None and margin_safety <= -0.12 and distribution >= 0.55:
         return "trim-into-strength"
     if opportunity >= 0.68 and macro_panic <= 0.82 and event_risk <= 0.8:
         return "accumulate-on-weakness"
@@ -1473,12 +1479,12 @@ def _action_rationale(
     risk_up_share: float,
     risk_down_share: float,
     relative_20: float | None,
-    margin_safety: float,
+    margin_safety: float | None,
 ) -> str:
     rel = f"{relative_20:+.1%}" if relative_20 is not None else "n/a"
     loc = f"{location:.0%}" if location is not None else "n/a"
     ret20_txt = f"{ret20:+.1%}" if ret20 is not None else "n/a"
-    mos_txt = f"{margin_safety:+.1%}"
+    mos_txt = f"{margin_safety:+.1%}" if margin_safety is not None else "n/a"
     if action_bias == "accumulate-on-weakness":
         return f"Deep pullback setup: 5d {ret5:+.1%}, 20d {ret20_txt}, drawdown {drawdown:.1%}, range location {loc}, vs SPY {rel}, margin of safety {mos_txt}."
     if action_bias == "trim-into-strength":
@@ -1741,36 +1747,72 @@ def _valuation_intel(openbb: dict[str, Any], current_price: float | None) -> dic
     quality = openbb.get("quality", {}) if isinstance(openbb.get("quality"), dict) else {}
     analyst = openbb.get("analyst", {}) if isinstance(openbb.get("analyst"), dict) else {}
     fundamental = openbb.get("fundamental", {}) if isinstance(openbb.get("fundamental"), dict) else {}
+    asset = openbb.get("asset", {}) if isinstance(openbb.get("asset"), dict) else {}
+
+    if bool(asset.get("isEtf")) or bool(asset.get("isFund")):
+        return {
+            "fairValue": None,
+            "marginSafety": None,
+            "verdict": "unknown",
+            "confidence": 0.0,
+            "undervaluationScore": 0.5,
+            "overvaluationScore": 0.5,
+            "methods": [
+                {
+                    "name": "etf_nav_not_modeled",
+                    "value": None,
+                    "weight": 0.0,
+                    "impliedUpside": None,
+                }
+            ],
+        }
 
     pe = _as_float(valuation.get("pe"))
     pb = _as_float(valuation.get("pb"))
+    ev_ebitda = _as_float(valuation.get("evEbitda"))
     fcf_yield = _as_float(valuation.get("fcfYield"))
     roe = _as_float(quality.get("roe"))
     gm = _as_float(quality.get("grossMargin"))
     d2e = _as_float(quality.get("debtToEquity"))
     target_price = _as_float(analyst.get("targetPrice"))
     recommendation = _as_float(analyst.get("recommendationMean"))
+    eps_ttm = _as_float(fundamental.get("epsTtm"))
+    book_value_per_share = _as_float(fundamental.get("bookValuePerShare"))
     eps_growth = _as_float(fundamental.get("earningsGrowth"))
     rev_growth = _as_float(fundamental.get("revenueGrowth"))
+    growth = eps_growth if isinstance(eps_growth, (int, float)) else rev_growth
+    growth = max(-0.08, min(0.35, float(growth))) if isinstance(growth, (int, float)) else None
 
     methods: list[dict[str, Any]] = []
     method_weights = 0.0
     weighted_value = 0.0
+    valuation_inputs = sum(
+        1
+        for item in (pe, pb, ev_ebitda, fcf_yield, roe, gm, d2e, target_price, eps_ttm, book_value_per_share, growth)
+        if isinstance(item, (int, float))
+    )
+
+    def add_method(name: str, value: float, weight: float, **extra: Any) -> None:
+        nonlocal weighted_value, method_weights
+        rel = value / price
+        if not (0.25 <= rel <= 4.0):
+            return
+        methods.append(
+            {
+                "name": name,
+                "value": round(value, 2),
+                "weight": round(weight, 3),
+                "impliedUpside": round(rel - 1, 4),
+                **extra,
+            }
+        )
+        weighted_value += value * weight
+        method_weights += weight
 
     if target_price and target_price > 0:
         rel = target_price / price
-        if 0.25 <= rel <= 4.0:
-            w = 0.38
-            methods.append(
-                {
-                    "name": "analyst_consensus",
-                    "value": round(target_price, 2),
-                    "weight": round(w, 3),
-                    "impliedUpside": round((target_price / price) - 1, 4),
-                }
-            )
-            weighted_value += target_price * w
-            method_weights += w
+        if 0.55 <= rel <= 1.8:
+            add_method("analyst_consensus", target_price, 0.24)
 
     if fcf_yield and fcf_yield > 0:
         quality_adj = 0.0
@@ -1782,106 +1824,57 @@ def _valuation_intel(openbb: dict[str, Any], current_price: float | None) -> dic
             quality_adj -= max(-0.008, min(0.012, (float(d2e) - 1.0) * 0.02))
         fair_yield = max(0.035, min(0.085, 0.055 - quality_adj))
         fcf_value = price * (float(fcf_yield) / fair_yield)
-        if 0.15 <= (fcf_value / price) <= 4.0:
-            w = 0.34
-            methods.append(
-                {
-                    "name": "fcf_cap_model",
-                    "value": round(fcf_value, 2),
-                    "weight": round(w, 3),
-                    "impliedUpside": round((fcf_value / price) - 1, 4),
-                    "assumedFairYield": round(fair_yield, 4),
-                }
-            )
-            weighted_value += fcf_value * w
-            method_weights += w
+        add_method("fcf_cap_model", fcf_value, 0.32, assumedFairYield=round(fair_yield, 4))
 
     if pe and pe > 0:
-        growth = eps_growth if isinstance(eps_growth, (int, float)) else rev_growth
-        growth = max(-0.05, min(0.35, float(growth))) if isinstance(growth, (int, float)) else 0.08
-        fair_pe = 16.0 + (growth * 38.0)
+        fair_pe = 16.0 + ((growth if growth is not None else 0.08) * 38.0)
         if isinstance(roe, (int, float)):
             fair_pe += max(-2.0, min(4.0, (float(roe) - 0.12) * 22.0))
         fair_pe = max(11.0, min(42.0, fair_pe))
         pe_value = price * (fair_pe / float(pe))
-        if 0.2 <= (pe_value / price) <= 3.5:
-            w = 0.18
-            methods.append(
-                {
-                    "name": "pe_relative",
-                    "value": round(pe_value, 2),
-                    "weight": round(w, 3),
-                    "impliedUpside": round((pe_value / price) - 1, 4),
-                    "fairMultiple": round(fair_pe, 2),
-                }
-            )
-            weighted_value += pe_value * w
-            method_weights += w
+        add_method("pe_relative", pe_value, 0.18, fairMultiple=round(fair_pe, 2))
+
+    if ev_ebitda and ev_ebitda > 0:
+        fair_ev = 11.0 + ((growth if growth is not None else 0.06) * 22.0)
+        if isinstance(gm, (int, float)):
+            fair_ev += max(-1.5, min(3.5, (float(gm) - 0.35) * 10.0))
+        if isinstance(d2e, (int, float)):
+            fair_ev -= max(-1.0, min(2.0, (float(d2e) - 1.0) * 1.6))
+        fair_ev = max(7.0, min(28.0, fair_ev))
+        ev_value = price * (fair_ev / float(ev_ebitda))
+        add_method("ev_ebitda_relative", ev_value, 0.16, fairMultiple=round(fair_ev, 2))
 
     if pb and pb > 0 and isinstance(roe, (int, float)):
         fair_pb = max(1.2, min(12.0, float(roe) * 13.0))
         pb_value = price * (fair_pb / float(pb))
-        if 0.2 <= (pb_value / price) <= 3.5:
-            w = 0.1
-            methods.append(
-                {
-                    "name": "pb_relative",
-                    "value": round(pb_value, 2),
-                    "weight": round(w, 3),
-                    "impliedUpside": round((pb_value / price) - 1, 4),
-                    "fairMultiple": round(fair_pb, 2),
-                }
-            )
-            weighted_value += pb_value * w
-            method_weights += w
+        add_method("pb_relative", pb_value, 0.1, fairMultiple=round(fair_pb, 2))
 
-    if method_weights <= 0:
-        heuristic_values: list[float] = []
-        if pe and pe > 0:
-            fair_pe = 24.0
-            if isinstance(eps_growth, (int, float)):
-                fair_pe += max(-6.0, min(10.0, float(eps_growth) * 28.0))
-            fair_pe = max(10.0, min(40.0, fair_pe))
-            heuristic_values.append(price * (fair_pe / float(pe)))
-        if pb and pb > 0 and isinstance(roe, (int, float)):
-            fair_pb = max(1.0, min(10.0, float(roe) * 11.0))
-            heuristic_values.append(price * (fair_pb / float(pb)))
-        if heuristic_values:
-            fair_value = sum(heuristic_values) / len(heuristic_values)
-            margin_safety = (fair_value / price) - 1.0
-            confidence = 0.22
-            if margin_safety >= 0.15:
-                verdict = "undervalued"
-            elif margin_safety >= 0.08:
-                verdict = "slightly-undervalued"
-            elif margin_safety <= -0.15:
-                verdict = "overvalued"
-            elif margin_safety <= -0.08:
-                verdict = "slightly-overvalued"
-            else:
-                verdict = "fair"
-            return {
-                "fairValue": round(fair_value, 2),
-                "marginSafety": round(margin_safety, 4),
-                "verdict": verdict,
-                "confidence": round(confidence, 3),
-                "undervaluationScore": round(_clamp01(((margin_safety + 0.02) / 0.35) * confidence + (1 - confidence) * 0.5), 3),
-                "overvaluationScore": round(_clamp01(((-margin_safety + 0.02) / 0.35) * confidence + (1 - confidence) * 0.5), 3),
-                "methods": [{"name": "multiples_heuristic", "value": round(fair_value, 2), "weight": 0.12, "impliedUpside": round(margin_safety, 4)}],
-            }
+    if eps_ttm and eps_ttm > 0 and book_value_per_share and book_value_per_share > 0:
+        graham_value = math.sqrt(max(0.0, 22.5 * float(eps_ttm) * float(book_value_per_share)))
+        add_method("graham_number", graham_value, 0.08)
+
+    if method_weights <= 0 or len(methods) < 2 or valuation_inputs < 3:
         return {
-            "fairValue": round(price, 2),
-            "marginSafety": 0.0,
-            "verdict": "fair",
-            "confidence": 0.05,
+            "fairValue": None,
+            "marginSafety": None,
+            "verdict": "unknown",
+            "confidence": 0.0,
             "undervaluationScore": 0.5,
             "overvaluationScore": 0.5,
-            "methods": [{"name": "price_anchor_no_fundamental", "value": round(price, 2), "weight": 0.01, "impliedUpside": 0.0}],
+            "methods": methods[:4] if methods else [{"name": "insufficient_valuation_inputs", "value": None, "weight": 0.0, "impliedUpside": None}],
         }
 
-    fair_value = weighted_value / method_weights
+    method_values = sorted(float(method["value"]) for method in methods if isinstance(method.get("value"), (int, float)))
+    weighted_fair_value = weighted_value / method_weights
+    median_fair_value = method_values[len(method_values) // 2]
+    fair_value = (weighted_fair_value * 0.65) + (median_fair_value * 0.35)
     margin_safety = (fair_value / price) - 1.0
-    confidence = _clamp01(0.25 + (method_weights * 0.7) + (0.05 if recommendation is not None else 0.0))
+    confidence = _clamp01(
+        0.18
+        + min(0.45, len(methods) * 0.12)
+        + min(0.22, valuation_inputs * 0.03)
+        + (0.05 if recommendation is not None else 0.0)
+    )
     if margin_safety >= 0.15:
         verdict = "undervalued"
     elif margin_safety >= 0.08:

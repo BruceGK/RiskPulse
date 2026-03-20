@@ -72,6 +72,31 @@ class OpenBBProvider:
         row_alpha = alpha_overview if isinstance(alpha_overview, dict) else {}
         row_yahoo = yahoo_overview if isinstance(yahoo_overview, dict) else {}
         row_yahoo_quote = yahoo_quote if isinstance(yahoo_quote, dict) else {}
+        quote_type = str(
+            _first_value(row_profile, ("quote_type", "quoteType", "security_type", "instrument_type"))
+            or row_yahoo.get("quoteType")
+            or row_yahoo_quote.get("quoteType")
+            or ""
+        ).upper()
+        is_etf = _coalesce_bool(
+            _first_value(row_profile, ("is_etf", "isEtf")),
+            row_yahoo.get("isEtf"),
+            row_yahoo_quote.get("isEtf"),
+            quote_type == "ETF",
+        )
+        is_fund = _coalesce_bool(
+            _first_value(row_profile, ("is_fund", "isFund")),
+            row_yahoo.get("isFund"),
+            row_yahoo_quote.get("isFund"),
+            quote_type in {"MUTUALFUND", "MUTUAL FUND", "FUND"},
+        )
+        company_name = str(
+            _first_value(row_profile, ("name", "company_name", "long_name"))
+            or row_alpha.get("Name")
+            or row_yahoo_quote.get("longName")
+            or row_yahoo_quote.get("shortName")
+            or ""
+        ).strip() or None
 
         pe = _coalesce_float(
             _first_value(row_metrics, ("pe_ratio", "pe", "price_earnings_ratio")),
@@ -170,6 +195,12 @@ class OpenBBProvider:
             "provider": "openbb",
             "sector": _first_value(row_profile, ("sector", "gics_sector")) or row_yahoo.get("sector") or None,
             "industry": _first_value(row_profile, ("industry", "gics_industry")) or row_yahoo.get("industry") or None,
+            "asset": {
+                "quoteType": quote_type or None,
+                "isEtf": bool(is_etf),
+                "isFund": bool(is_fund),
+                "name": company_name,
+            },
             "valuation": {
                 "pe": pe,
                 "pb": pb,
@@ -427,6 +458,9 @@ class OpenBBProvider:
                 "MarketCapitalization": market_cap,
                 "recommendationMean": _floatish(row.get("averageAnalystRating")),
                 "shortInterestPct": _float_or_none(row.get("shortPercentOfFloat")),
+                "quoteType": row.get("quoteType"),
+                "longName": row.get("longName"),
+                "shortName": row.get("shortName"),
             }
         except Exception:
             return None
@@ -480,6 +514,28 @@ def _float_or_none(value: Any) -> float | None:
 def _coalesce_float(*values: Any) -> float | None:
     for value in values:
         parsed = _float_or_none(value)
+        if parsed is not None:
+            return parsed
+    return None
+
+
+def _coerce_bool(value: Any) -> bool | None:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value)
+    if isinstance(value, str):
+        text = value.strip().lower()
+        if text in {"true", "1", "yes", "y", "etf", "fund"}:
+            return True
+        if text in {"false", "0", "no", "n"}:
+            return False
+    return None
+
+
+def _coalesce_bool(*values: Any) -> bool | None:
+    for value in values:
+        parsed = _coerce_bool(value)
         if parsed is not None:
             return parsed
     return None
