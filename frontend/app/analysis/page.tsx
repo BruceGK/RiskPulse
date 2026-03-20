@@ -642,6 +642,19 @@ export default function AnalysisPage() {
     ticker: tickerHeadlineGroups.reduce((sum, group) => sum + Math.min(group.items.length, 3), 0),
     sec: secHeadlines.length,
   };
+  const tickerRailItems = useMemo(
+    () =>
+      tickerHeadlineGroups.flatMap(({ ticker, items }) =>
+        items.slice(0, 3).map((item) => ({
+          ...item,
+          railTicker: ticker,
+        }))
+      ),
+    [tickerHeadlineGroups]
+  );
+  const activeRailItems = railTab === "macro" ? topHeadlines : railTab === "sec" ? secHeadlines : tickerRailItems;
+  const featuredRailItem = activeRailItems[0] || null;
+  const secondaryRailItems = activeRailItems.slice(1, 6);
 
   useEffect(() => {
     if (!shareStatus) return;
@@ -676,26 +689,69 @@ export default function AnalysisPage() {
       window.prompt("Copy this share link:", url);
     }
   };
+  const primaryNav = ["Dashboard", "Risk Analysis", "Strategies", "History"];
+  const sidebarItems = lossMode
+    ? ["Overview", "Terminal", "Builder", "Doom Scenarios", "Reports"]
+    : ["Overview", "Terminal", "Builder", "Signals", "Reports"];
 
   return (
-    <main className={`container ${lossMode ? "losspulse" : ""}`}>
-      <header className="topbar">
-        <Link href="/portfolio" className="brand">
-          <span className="brand-dot" />
-          RiskPulse
-        </Link>
-        <div className="top-actions">
-          <Link href="/portfolio" className="nav-link">
+    <div className={`terminal-app ${lossMode ? "terminal-loss" : "terminal-risk"}`}>
+      <header className="terminal-topnav">
+        <div className="terminal-topnav-left">
+          <Link href="/analysis" className="terminal-wordmark">
+            {lossMode ? "LossPulse Intelligence" : "Portfolio Intelligence"}
+          </Link>
+          <nav className="terminal-nav-links">
+            {primaryNav.map((item) => (
+              <span className={`terminal-nav-link ${item === "Dashboard" ? "active" : ""}`} key={item}>
+                {item}
+              </span>
+            ))}
+          </nav>
+        </div>
+        <div className="terminal-topnav-right">
+          <div className="terminal-search-shell">
+            <span className="terminal-search-icon">⌕</span>
+            <input className="terminal-search-input" placeholder="Search Terminal..." aria-label="Search terminal" />
+          </div>
+          <div className={`terminal-mode-badge ${lossMode ? "loss" : "risk"}`}>
+            {lossMode ? "LossPulse Pro Active" : "Pro View Active"}
+          </div>
+          <Link href="/portfolio" className="btn secondary terminal-top-action">
             Edit Portfolio
           </Link>
-          <button className="btn secondary" onClick={handleShareView} disabled={!positions.length}>
+          <button className="btn secondary terminal-top-action" onClick={handleShareView} disabled={!positions.length}>
             Share View
           </button>
-          <button className="btn secondary" onClick={() => setRefreshTick((n) => n + 1)} disabled={loading || !positions.length}>
+          <button className="btn secondary terminal-top-action" onClick={() => setRefreshTick((n) => n + 1)} disabled={loading || !positions.length}>
             {loadPhase === "quick" ? "Loading Quick Pass..." : loadPhase === "full" ? "Hydrating Deep Analysis..." : "Refresh Analysis"}
           </button>
         </div>
       </header>
+
+      <aside className="terminal-sidebar">
+        <div className="terminal-sidebar-brand">
+          <div className="terminal-sidebar-icon">{lossMode ? "LP" : "RP"}</div>
+          <div>
+            <div className="terminal-sidebar-title">Pulse Terminal</div>
+            <div className="terminal-sidebar-meta">{lossMode ? "v2.4.0 pro destruction" : "v2.4.0 active"}</div>
+          </div>
+        </div>
+        <nav className="terminal-sidebar-nav">
+          {sidebarItems.map((item) => (
+            <div className={`terminal-sidebar-item ${item === "Overview" ? "active" : ""}`} key={item}>
+              {item}
+            </div>
+          ))}
+        </nav>
+        <button className="terminal-sidebar-cta">{lossMode ? "Incinerate Capital" : "Deploy Capital"}</button>
+        <div className="terminal-sidebar-footer">
+          <div className="terminal-sidebar-item small">Help</div>
+          <div className="terminal-sidebar-item small">Sign Out</div>
+        </div>
+      </aside>
+
+      <main className={`container terminal-page ${lossMode ? "losspulse" : ""}`}>
       {showDemoBanner && isDemoSeeded && (
         <div className="status onboarding-banner" style={{ marginBottom: 12 }}>
           <div>
@@ -719,66 +775,92 @@ export default function AnalysisPage() {
         </div>
       )}
 
-      <section className="hero">
-        <h1>{lossMode ? "LossPulse: Capital Destruction Terminal" : "Portfolio Risk Overview"}</h1>
-        <p className="hero-sub">
-          {lossMode
-            ? "Optimizing capital destruction with professional-grade bad decisions."
-            : "Multi-model risk engine with forecast, action book, and instant news context."}
-        </p>
-        <p className="hero-sub research-note">
-          Analysis framework backed by research from{" "}
-          <a href="https://shitjournal.org" target="_blank" rel="noreferrer" className="research-link">
-            S.H.I.T Journal
-          </a>
-          .
-        </p>
-        {analysis && (
-          <div className="hero-meta">
-            <span className="pill">As of {analysis.as_of}</span>
-            <span className="pill">Portfolio {money(analysis.portfolio_value)}</span>
-            <span className="pill">Top5 {pct(analysis.top_concentration.top5Weight)}</span>
-            <span className="pill">Model {typeof modelInfo?.name === "string" ? modelInfo.name : "baseline"}</span>
-            {lossMode && <span className="pill">Loss Mode</span>}
-          </div>
-        )}
-      </section>
+      {analysis && (
+        <section className="terminal-stat-row">
+          <article className="terminal-stat-card">
+            <div className="terminal-overline">{lossMode ? "Loss Velocity" : "Portfolio Value"}</div>
+            <div className="terminal-stat-value">{lossMode ? pct(lossMetrics.lossVelocity) : money(analysis.portfolio_value)}</div>
+          </article>
+          <article className="terminal-stat-card">
+            <div className="terminal-overline">{lossMode ? "Bag Holder Index" : "Volatility 60D"}</div>
+            <div className="terminal-stat-value">{lossMode ? pct(lossMetrics.bagHolderIndex) : pct(analysis.risk.vol60d)}</div>
+          </article>
+          <article className="terminal-stat-card">
+            <div className="terminal-overline">{lossMode ? "Regret Score" : "5D Downside Prob"}</div>
+            <div className="terminal-stat-value danger">{lossMode ? pct(lossMetrics.regretScore) : pct(asNumber(prediction5d?.downsideProb))}</div>
+          </article>
+          <article className="terminal-stat-card">
+            <div className="terminal-overline">{lossMode ? "Impulse Trade Ratio" : "Forecast Confidence"}</div>
+            <div className="terminal-stat-value accent">{lossMode ? pct(lossMetrics.impulseTradeRatio) : pct(predictionConfidence)}</div>
+          </article>
+        </section>
+      )}
 
-      {analysis && pulseThesis && (
-        <section className="pulse">
-          <div className="pulse-label">{lossMode ? "Market Doomcast" : "Market Pulse"}</div>
-          <div className="pulse-row">
-            <p className="pulse-text">{pulseThesis}</p>
-            <span className={`stance ${pulseStanceView.cls}`}>{pulseStanceView.label}</span>
+      <section className={`lead-grid ${analysis && pulseThesis ? "with-pulse" : "solo"}`}>
+        <section className="hero">
+          <div className="hero-kicker">
+            <span className="terminal-overline">{lossMode ? "Destruction desk" : "Portfolio intelligence"}</span>
+            {analysis && <span className={`stance ${pulseStanceView.cls}`}>{pulseStanceView.label}</span>}
           </div>
-          {pulseDeskNote && <p className="pulse-note">{pulseDeskNote}</p>}
-          {pulseFocus.length > 0 && (
-            <div className="pulse-focus">
-              {pulseFocus.map((item) => (
-                <span className="chip" key={item}>
-                  {item}
-                </span>
-              ))}
-            </div>
-          )}
-          {(pulseMacroTape || pulseEventTape || pulsePositioningTape) && (
-            <div className="pulse-lines">
-              {pulseMacroTape && <div className="pulse-line">{pulseMacroTape}</div>}
-              {pulseEventTape && <div className="pulse-line">{pulseEventTape}</div>}
-              {pulsePositioningTape && <div className="pulse-line">{pulsePositioningTape}</div>}
-            </div>
-          )}
-          {pulsePlaybook.length > 0 && (
-            <div className="pulse-playbook">
-              {pulsePlaybook.map((step) => (
-                <span className="chip" key={step}>
-                  {step}
-                </span>
-              ))}
+          <h1>{lossMode ? "LossPulse: Capital Destruction Terminal" : "Portfolio Risk Overview"}</h1>
+          <p className="hero-sub">
+            {lossMode
+              ? "Optimizing capital destruction with professional-grade bad decisions."
+              : "Multi-model risk engine with forecast, action book, and instant news context."}
+          </p>
+          <p className="hero-sub research-note">
+            Analysis framework backed by research from{" "}
+            <a href="https://shitjournal.org" target="_blank" rel="noreferrer" className="research-link">
+              S.H.I.T Journal
+            </a>
+            .
+          </p>
+          {analysis && (
+            <div className="hero-meta">
+              <span className="pill">As of {analysis.as_of}</span>
+              <span className="pill">Portfolio {money(analysis.portfolio_value)}</span>
+              <span className="pill">Top5 {pct(analysis.top_concentration.top5Weight)}</span>
+              <span className="pill">Model {typeof modelInfo?.name === "string" ? modelInfo.name : "baseline"}</span>
+              {lossMode && <span className="pill">Loss Mode</span>}
             </div>
           )}
         </section>
-      )}
+
+        {analysis && pulseThesis && (
+          <section className="pulse lead-pulse">
+            <div className="pulse-label">{lossMode ? "Market Doomcast" : "Market Pulse"}</div>
+            <div className="pulse-row">
+              <p className="pulse-text">{pulseThesis}</p>
+            </div>
+            {pulseDeskNote && <p className="pulse-note">{pulseDeskNote}</p>}
+            {pulseFocus.length > 0 && (
+              <div className="pulse-focus">
+                {pulseFocus.map((item) => (
+                  <span className="chip" key={item}>
+                    {item}
+                  </span>
+                ))}
+              </div>
+            )}
+            {(pulseMacroTape || pulseEventTape || pulsePositioningTape) && (
+              <div className="pulse-lines">
+                {pulseMacroTape && <div className="pulse-line">{pulseMacroTape}</div>}
+                {pulseEventTape && <div className="pulse-line">{pulseEventTape}</div>}
+                {pulsePositioningTape && <div className="pulse-line">{pulsePositioningTape}</div>}
+              </div>
+            )}
+            {pulsePlaybook.length > 0 && (
+              <div className="pulse-playbook">
+                {pulsePlaybook.map((step) => (
+                  <span className="chip" key={step}>
+                    {step}
+                  </span>
+                ))}
+              </div>
+            )}
+          </section>
+        )}
+      </section>
 
       {loading && <div className="status">{loadingMessage}</div>}
       {!loading && fullPending && <div className="status">Deep analysis is still loading in the background...</div>}
@@ -786,30 +868,6 @@ export default function AnalysisPage() {
 
       {analysis && (
         <>
-          <section className="grid cards" style={{ marginTop: 14 }}>
-            <article className="kpi">
-              <div className="kpi-label">{lossMode ? "Loss Velocity" : "Portfolio Value"}</div>
-              <div className="kpi-value">{lossMode ? pct(lossMetrics.lossVelocity) : money(analysis.portfolio_value)}</div>
-            </article>
-            <article className="kpi">
-              <div className="kpi-label">{lossMode ? "Bag Holder Index" : "Volatility 60D"}</div>
-              <div className="kpi-value">{lossMode ? pct(lossMetrics.bagHolderIndex) : pct(analysis.risk.vol60d)}</div>
-            </article>
-            <article className="kpi">
-              <div className="kpi-label">{lossMode ? "Regret Score" : "5D Downside Prob"}</div>
-              <div className="kpi-value">{lossMode ? pct(lossMetrics.regretScore) : pct(asNumber(prediction5d?.downsideProb))}</div>
-            </article>
-            <article className="kpi">
-              <div className="kpi-label">{lossMode ? "Impulse Trade Ratio" : "Forecast Confidence"}</div>
-              <div className="kpi-value">{lossMode ? pct(lossMetrics.impulseTradeRatio) : pct(predictionConfidence)}</div>
-            </article>
-          </section>
-          <p className="helper-text">
-            {lossMode
-              ? "These scores track how efficiently your setup can self-destruct."
-              : "Fast read: these cards summarize portfolio scale, realized volatility, near-term downside odds, and model confidence."}
-          </p>
-
           {lossMode && (
             <section className="grid two" style={{ marginTop: 10 }}>
               <article className="panel loss-panel">
@@ -894,8 +952,10 @@ export default function AnalysisPage() {
                   )}
 
                   <section className="grid two" style={{ marginTop: 14 }}>
-                    <article className="panel">
+                    <article className="panel overview-allocation-panel">
+                      <div className="panel-kicker">Portfolio concentration</div>
                       <h3>Top Allocation</h3>
+                      <p className="helper-text">Largest holdings and capital clustering across the book.</p>
                       <div className="allocation-list">
                         {topPositions.map((position) => (
                           <div className="allocation-item" key={position.ticker}>
@@ -909,14 +969,24 @@ export default function AnalysisPage() {
                       </div>
                     </article>
 
-                    <article className="panel">
+                    <article className="panel overview-coverage-panel">
+                      <div className="panel-kicker">System telemetry</div>
                       <h3>Input Coverage</h3>
-                      <div className="notes">
-                        <div className="note">Price coverage: {pct(dataQuality?.priceCoverage)}</div>
-                        <div className="note">Macro coverage: {pct(dataQuality?.macroCoverage)}</div>
-                        <div className="note">Macro headlines: {String(dataQuality?.macroNewsCount ?? "-")}</div>
+                      <div className="coverage-stack">
+                        <div className="coverage-item">
+                          <span>Price coverage</span>
+                          <strong>{pct(dataQuality?.priceCoverage)}</strong>
+                        </div>
+                        <div className="coverage-item">
+                          <span>Macro coverage</span>
+                          <strong>{pct(dataQuality?.macroCoverage)}</strong>
+                        </div>
+                        <div className="coverage-item">
+                          <span>Macro headlines</span>
+                          <strong>{String(dataQuality?.macroNewsCount ?? "-")}</strong>
+                        </div>
                       </div>
-                      <div className="hero-meta" style={{ marginTop: 12 }}>
+                      <div className="provider-cloud" style={{ marginTop: 14 }}>
                         {providerEntries.map(([k, v]) => (
                           <span className="chip" key={k}>
                             <span className="chip-dot" style={{ background: Boolean(v) ? "var(--good)" : "#9ca9b6" }} />
@@ -1898,6 +1968,7 @@ export default function AnalysisPage() {
             </div>
 
             <aside className="panel news-rail">
+              <div className="panel-kicker">{lossMode ? "Curated panic flow" : "Curated intelligence rail"}</div>
               <h3>{lossMode ? "Doom Feed" : "News & Events"}</h3>
               <div className="rail-tabs">
                 <button className={`rail-tab ${railTab === "macro" ? "active" : ""}`} onClick={() => setRailTab("macro")}>
@@ -1910,71 +1981,53 @@ export default function AnalysisPage() {
                   SEC ({railCounts.sec})
                 </button>
               </div>
+              <p className="helper-text">
+                {lossMode
+                  ? "A compact stream of catalysts, doom fuel, and filing drama."
+                  : "A compact stream of the most relevant catalysts, holdings headlines, and filings."}
+              </p>
 
-              {railTab === "macro" && (
-                <div className="headlines" style={{ marginTop: 8 }}>
-                  {topHeadlines.length === 0 ? (
-                    <div className="status">No macro headlines available.</div>
-                  ) : (
-                    topHeadlines.slice(0, 6).map((item) => (
-                      <a className="headline" key={`${item.url}-${item.published_at}`} href={item.url} target="_blank" rel="noreferrer">
-                        <div className="headline-title">{item.title}</div>
-                        <div className="headline-meta">
-                          {item.source}
-                          {item.published_at ? ` · ${item.published_at.slice(0, 16)}` : ""}
+              {featuredRailItem ? (
+                <>
+                  <a className="rail-feature" href={featuredRailItem.url} target="_blank" rel="noreferrer">
+                    {railTab === "ticker" && "railTicker" in featuredRailItem && typeof featuredRailItem.railTicker === "string" && (
+                      <span className="pill rail-feature-pill">{featuredRailItem.railTicker}</span>
+                    )}
+                    <div className="rail-feature-title">{featuredRailItem.title}</div>
+                    <div className="rail-feature-meta">
+                      {featuredRailItem.source}
+                      {featuredRailItem.published_at ? ` · ${featuredRailItem.published_at.slice(0, 16)}` : ""}
+                    </div>
+                  </a>
+                  <div className="rail-list">
+                    {secondaryRailItems.map((item, idx) => (
+                      <a className="rail-list-item" key={`${item.url || item.title}-${idx}`} href={item.url} target="_blank" rel="noreferrer">
+                        <div className="rail-list-top">
+                          <span className="rail-list-source">
+                            {railTab === "ticker" && "railTicker" in item && typeof item.railTicker === "string" ? `${item.railTicker} · ` : ""}
+                            {item.source}
+                          </span>
+                          <span className="rail-list-time">{item.published_at ? item.published_at.slice(0, 10) : "-"}</span>
                         </div>
+                        <div className="rail-list-title">{item.title}</div>
                       </a>
-                    ))
-                  )}
-                </div>
-              )}
-
-              {railTab === "ticker" && (
-                <div className="headlines" style={{ marginTop: 8 }}>
-                  {tickerHeadlineGroups.length === 0 ? (
-                    <div className="status">No holdings headlines available.</div>
-                  ) : (
-                    tickerHeadlineGroups.slice(0, 3).map(({ ticker, items }) => (
-                      <div key={ticker}>
-                        <h4 style={{ margin: "0 0 6px 0" }}>{ticker}</h4>
-                        <div className="headlines">
-                          {items.slice(0, 3).map((item) => (
-                            <a className="headline" key={`${item.url}-${item.published_at}`} href={item.url} target="_blank" rel="noreferrer">
-                              <div className="headline-title">{item.title}</div>
-                              <div className="headline-meta">
-                                {item.source}
-                                {item.published_at ? ` · ${item.published_at.slice(0, 16)}` : ""}
-                              </div>
-                            </a>
-                          ))}
-                        </div>
-                      </div>
-                    ))
-                  )}
-                </div>
-              )}
-
-              {railTab === "sec" && (
-                <div className="headlines" style={{ marginTop: 8 }}>
-                  {secHeadlines.length === 0 ? (
-                    <div className="status">No recent SEC filings available.</div>
-                  ) : (
-                    secHeadlines.slice(0, 6).map((item) => (
-                      <a className="headline" key={`${item.title}-${item.published_at}`} href={item.url} target="_blank" rel="noreferrer">
-                        <div className="headline-title">{item.title}</div>
-                        <div className="headline-meta">
-                          {item.source}
-                          {item.published_at ? ` · ${item.published_at.slice(0, 10)}` : ""}
-                        </div>
-                      </a>
-                    ))
-                  )}
+                    ))}
+                  </div>
+                </>
+              ) : (
+                <div className="status" style={{ marginTop: 8 }}>
+                  {railTab === "macro"
+                    ? "No macro headlines available."
+                    : railTab === "ticker"
+                      ? "No holdings headlines available."
+                      : "No recent SEC filings available."}
                 </div>
               )}
             </aside>
           </section>
         </>
       )}
-    </main>
+      </main>
+    </div>
   );
 }
