@@ -1868,14 +1868,14 @@ export default function AnalysisPage() {
                                     <tr key={`detail-${ticker}-${idx}`} className="intel-expand">
                                       <td colSpan={holdingsColSpan}>
                                         <div className="intel-detail-grid">
-                                          <div>
+                                          <div className="intel-info-card">
                                             <div className="kpi-label">Positioning Context</div>
-                                            <div className="note" style={{ marginTop: 6 }}>
+                                            <div className="note intel-note-lead">
                                               Confidence {pct(confidence)} · Alpha {pct(asNumber(row.alphaScore))}
                                             </div>
                                             <div className="note">{rationale || "No rationale text was available in this run."}</div>
                                           </div>
-                                          <div>
+                                          <div className="intel-info-card">
                                             <div className="kpi-label">Valuation & Inputs</div>
                                             <div className="note">Fair value {money(fairValue)} · margin {pct(marginSafety)}</div>
                                             <div className="note">Input coverage {valInputs === null ? "-" : `${valInputs.toFixed(0)} factors`}</div>
@@ -1886,7 +1886,7 @@ export default function AnalysisPage() {
                                               </div>
                                             )}
                                           </div>
-                                          <div>
+                                          <div className="intel-info-card">
                                             <div className="kpi-label">How Fair Value Is Built</div>
                                             <div className="note">{valuationExplain}</div>
                                             {valuationMethods.length > 0 && (
@@ -1895,13 +1895,13 @@ export default function AnalysisPage() {
                                               </div>
                                             )}
                                           </div>
-                                          <div>
+                                          <div className="intel-info-card">
                                             <div className="kpi-label">Technicals</div>
                                             <div className="note">State {techState} · score {pct(techScore)}</div>
                                             <div className="note">RSI {rsi === null ? "-" : rsi.toFixed(1)} · ADX {adx === null ? "-" : adx.toFixed(1)}</div>
                                             <div className="note">Themes {themes}</div>
                                           </div>
-                                          <div className="confluence-card">
+                                          <div className="intel-info-card confluence-card">
                                             <div className="kpi-label">Confluence Engine</div>
                                             <div className="confluence-score-row">
                                               <span className="confluence-score">{confluenceFinal === null ? "-" : confluenceFinal.toFixed(1)}</span>
@@ -1917,7 +1917,7 @@ export default function AnalysisPage() {
                                             <div className="note">{layerExplanation || "Layer explanation is unavailable for this run."}</div>
                                             <div className="note">Macro gate {macroGateState}. {macroGateCondition}</div>
                                           </div>
-                                          <div className="analyst-read-card">
+                                          <div className="intel-info-card analyst-read-card">
                                             <div className="kpi-label">Analyst Read</div>
                                             <div className="note">{analystThesis || "No analyst thesis was produced for this run."}</div>
                                             <div className="note"><strong>Confirms if:</strong> {confirmsIf || "-"}</div>
