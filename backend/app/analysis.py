@@ -94,6 +94,7 @@ class AnalysisService:
                 "construction": {},
                 "alphaBook": {},
                 "submodels": {},
+                "analystDesk": {},
             }
             notes: list[str] = []
             if top5_weight >= 0.7:
@@ -159,6 +160,7 @@ class AnalysisService:
                 "construction": {},
                 "alphaBook": {},
                 "submodels": {},
+                "analystDesk": {},
             }
         notes = self._build_notes(top5_weight, risk, missing_quotes, news)
         if not behavioral.get("tickerIntel"):
@@ -503,6 +505,53 @@ class AnalysisService:
                 news_stats["eventRisk"],
                 valuation_margin,
             )
+            confirmation_state = _confirmation_state(
+                ret5=ret5,
+                ret20=ret20,
+                location=location,
+                technical_trend=technical_trend,
+                technical_reversal=technical_reversal,
+                technical_strength=technical_strength,
+                risk_up_share=news_stats["riskUpShare"],
+            )
+            entry_discipline = _entry_discipline(
+                action_bias=action_bias,
+                ret5=ret5,
+                ret20=ret20,
+                drawdown=drawdown,
+                panic_score=panic_score,
+                event_risk=news_stats["eventRisk"],
+                technical_trend=technical_trend,
+                technical_reversal=technical_reversal,
+                margin_safety=valuation_margin,
+            )
+            analyst_triggers = _analyst_triggers(
+                ticker=p.ticker,
+                action_bias=action_bias,
+                confirmation_state=confirmation_state,
+                entry_discipline=entry_discipline,
+                location=location,
+                relative_20=relative_20,
+                macro_panic=macro_panic,
+                event_risk=news_stats["eventRisk"],
+                valuation_margin=valuation_margin,
+            )
+            macro_gate = _macro_gate_from_scores(macro_panic, macro_shock, macro_relief)
+            layer_scores = _layer_scores(
+                regime_panic=macro_panic,
+                macro_gate=macro_gate,
+                technical_trend=technical_trend,
+                technical_oversold=technical_oversold,
+                technical_overbought=technical_overbought,
+                action_bias=action_bias,
+                confirmation_state=confirmation_state,
+                valuation_margin=valuation_margin,
+                event_risk=news_stats["eventRisk"],
+                risk_up_share=news_stats["riskUpShare"],
+                risk_down_share=news_stats["riskDownShare"],
+                headline_count=len(ticker_news),
+            )
+            confluence_score = _confluence_score(layer_scores, macro_gate)
             rationale = _action_rationale(
                 action_bias=action_bias,
                 ret5=ret5,
@@ -529,6 +578,12 @@ class AnalysisService:
                 "headlineCount": len(ticker_news),
                 "rationale": rationale,
                 "alphaScore": round((opportunity_index - distribution_index) * confidence, 3),
+                "confirmationState": confirmation_state,
+                "entryDiscipline": entry_discipline,
+                "macroGate": macro_gate,
+                "layerScores": layer_scores,
+                "confluenceScore": confluence_score,
+                "analystRead": analyst_triggers,
                 "technical": technical,
                 "openbb": openbb,
                 "valuation": valuation_intel,
@@ -660,6 +715,14 @@ class AnalysisService:
             "alphaBook": alpha_book,
             "submodels": submodels,
             "technicalSummary": _technical_summary(ticker_intel, tracked_count=len(tracked)),
+            "analystDesk": _analyst_desk_summary(
+                ticker_intel=ticker_intel,
+                regime_state=regime_state,
+                macro_gate=_macro_gate_from_scores(macro_panic, macro_shock, macro_relief),
+                weighted_opportunity=weighted_opportunity,
+                weighted_distribution=weighted_distribution,
+                weighted_event_risk=weighted_event_risk,
+            ),
         }
 
     def _build_signals(
@@ -705,6 +768,7 @@ class AnalysisService:
             "alphaBook": behavioral.get("alphaBook", {}),
             "submodels": behavioral.get("submodels", {}),
             "technicalSummary": behavioral.get("technicalSummary", {}),
+            "analystDesk": behavioral.get("analystDesk", {}),
             "macroContext": macro_context,
         }
 
@@ -1034,6 +1098,7 @@ class AnalysisService:
             "alphaBook": base.get("alphaBook", {}),
             "submodels": base.get("submodels", {}),
             "technicalSummary": base.get("technicalSummary", {}),
+            "analystDesk": base.get("analystDesk", {}),
             "macroContext": base.get("macroContext", {}),
         }
 
@@ -1492,6 +1557,259 @@ def _action_rationale(
     if action_bias == "de-risk-hedge":
         return f"Risk pressure setup: drawdown {drawdown:.1%}, risk-up headline share {risk_up_share:.0%}, relative performance {rel}, margin of safety {mos_txt}."
     return f"Mixed setup: 5d {ret5:+.1%}, 20d {ret20_txt}, range location {loc}, risk-up headlines {risk_up_share:.0%}, margin of safety {mos_txt}."
+
+
+def _confirmation_state(
+    *,
+    ret5: float,
+    ret20: float | None,
+    location: float | None,
+    technical_trend: float,
+    technical_reversal: float,
+    technical_strength: float,
+    risk_up_share: float,
+) -> str:
+    loc = location if location is not None else 0.5
+    ret20_value = ret20 if ret20 is not None else 0.0
+    if ret5 <= -0.035 and ret20_value <= -0.06 and technical_trend <= 0.38 and risk_up_share >= 0.45:
+        return "confirmed-breakdown"
+    if ret5 <= -0.02 and loc <= 0.3 and technical_reversal >= 0.45:
+        return "failed-breakdown-watch"
+    if ret5 >= 0.025 and technical_trend >= 0.58 and technical_strength >= 0.45:
+        return "reclaiming-resistance"
+    if loc <= 0.35 or technical_trend <= 0.45:
+        return "watching-support"
+    if loc >= 0.72 and technical_trend >= 0.55:
+        return "watching-exhaustion"
+    return "unconfirmed-mixed"
+
+
+def _entry_discipline(
+    *,
+    action_bias: str,
+    ret5: float,
+    ret20: float | None,
+    drawdown: float,
+    panic_score: float,
+    event_risk: float,
+    technical_trend: float,
+    technical_reversal: float,
+    margin_safety: float | None,
+) -> str:
+    ret20_value = ret20 if ret20 is not None else 0.0
+    if ret5 <= -0.045 and ret20_value <= -0.08 and event_risk >= 0.45 and technical_reversal < 0.35:
+        return "no-catch"
+    if margin_safety is not None and margin_safety >= 0.1 and technical_trend < 0.45:
+        return "cheap-but-not-ready"
+    if action_bias == "accumulate-on-weakness" and technical_reversal >= 0.4 and panic_score <= 0.72:
+        return "starter-size-ok"
+    if drawdown >= 0.18 and technical_reversal >= 0.5 and event_risk < 0.6:
+        return "confirmed-reversal"
+    if action_bias == "trim-into-strength":
+        return "trim-discipline"
+    return "wait-for-confirmation"
+
+
+def _analyst_triggers(
+    *,
+    ticker: str,
+    action_bias: str,
+    confirmation_state: str,
+    entry_discipline: str,
+    location: float | None,
+    relative_20: float | None,
+    macro_panic: float,
+    event_risk: float,
+    valuation_margin: float | None,
+) -> dict[str, Any]:
+    loc_txt = f"{location:.0%}" if location is not None else "unknown range location"
+    rel_txt = f"{relative_20:+.1%} vs SPY" if relative_20 is not None else "relative strength unavailable"
+    mos_txt = f"{valuation_margin:+.1%} margin of safety" if valuation_margin is not None else "valuation not confirmed"
+
+    if entry_discipline in {"no-catch", "cheap-but-not-ready"}:
+        thesis = f"{ticker} may be interesting, but the tape has not earned an entry yet."
+        confirms = "Wait for a close/open reclaim, improving relative strength, and lower headline event risk."
+        invalidates = "Avoid adding if price keeps making lower opens/closes while macro stress stays elevated."
+    elif action_bias == "accumulate-on-weakness":
+        thesis = f"{ticker} screens as a dislocation candidate, but position size should follow confirmation."
+        confirms = "A support hold plus improving relative strength validates scaling into weakness."
+        invalidates = "A confirmed support break with risk-up headlines turns the setup into capital preservation."
+    elif action_bias == "trim-into-strength":
+        thesis = f"{ticker} shows crowded upside; strength is more useful for discipline than chasing."
+        confirms = "Failure to extend after a high-range move supports trimming into liquidity."
+        invalidates = "A clean breakout with improving breadth reduces immediate distribution risk."
+    elif action_bias == "de-risk-hedge":
+        thesis = f"{ticker} is being dominated by event or macro risk."
+        confirms = "Hedge posture remains favored while macro panic or event risk stays high."
+        invalidates = "Risk can be relaxed after volatility, macro drivers, and headlines cool together."
+    else:
+        thesis = f"{ticker} is a conditional hold; the next signal matters more than the current score."
+        confirms = "Upgrade only after price confirmation and cleaner catalyst flow."
+        invalidates = "Downgrade if support fails or event risk rises without offsetting valuation support."
+
+    return {
+        "thesis": thesis,
+        "confirmsIf": confirms,
+        "invalidatesIf": invalidates,
+        "whyNow": f"State={confirmation_state}; entry={entry_discipline}; location={loc_txt}; relative={rel_txt}; {mos_txt}; macro panic {macro_panic:.0%}; event risk {event_risk:.0%}.",
+    }
+
+
+def _macro_gate_from_scores(macro_panic: float, macro_shock: float, macro_relief: float) -> dict[str, Any]:
+    if macro_panic >= 0.65 or macro_shock >= 0.55:
+        return {
+            "state": "open-risk-gate",
+            "driver": "volatility/rates/headline shock",
+            "condition": "Require stronger technical confirmation before adding exposure.",
+            "bias": "risk-up",
+            "factor": 0.5,
+        }
+    if macro_relief >= 0.45 and macro_panic <= 0.42:
+        return {
+            "state": "relief-gate",
+            "driver": "volatility/rates relief",
+            "condition": "Opportunity setups can be scaled if price confirmation appears.",
+            "bias": "risk-down",
+            "factor": 1.0,
+        }
+    return {
+        "state": "neutral-gate",
+        "driver": "mixed macro tape",
+        "condition": "Let single-name confirmation and catalyst quality drive decisions.",
+        "bias": "balanced",
+        "factor": 1.0,
+    }
+
+
+def _layer_scores(
+    *,
+    regime_panic: float,
+    macro_gate: dict[str, Any],
+    technical_trend: float,
+    technical_oversold: float,
+    technical_overbought: float,
+    action_bias: str,
+    confirmation_state: str,
+    valuation_margin: float | None,
+    event_risk: float,
+    risk_up_share: float,
+    risk_down_share: float,
+    headline_count: int,
+) -> dict[str, Any]:
+    regime = 0
+    if macro_gate.get("bias") == "risk-up" or regime_panic >= 0.62:
+        regime = -1
+    elif macro_gate.get("bias") == "risk-down" or regime_panic <= 0.32:
+        regime = 1
+
+    technical = 0
+    if confirmation_state == "confirmed-breakdown" or (technical_trend <= 0.38 and technical_overbought < 0.25):
+        technical = -1
+    elif confirmation_state in {"reclaiming-resistance", "failed-breakdown-watch"} or (
+        technical_trend >= 0.58 and technical_oversold < 0.35
+    ):
+        technical = 1
+    elif technical_oversold >= 0.58 and technical_trend >= 0.42:
+        technical = 1
+    elif technical_overbought >= 0.62 and technical_trend <= 0.52:
+        technical = -1
+
+    event = 0
+    if event_risk >= 0.62 or risk_up_share >= 0.62:
+        event = -1
+    elif risk_down_share >= 0.55 and event_risk <= 0.45 and headline_count > 0:
+        event = 1
+
+    if action_bias == "accumulate-on-weakness" and valuation_margin is not None and valuation_margin >= 0.12:
+        event = max(event, 1)
+    elif action_bias == "trim-into-strength" and valuation_margin is not None and valuation_margin <= -0.1:
+        event = min(event, -1)
+
+    return {
+        "regime": regime,
+        "technical": technical,
+        "event": event,
+        "explanation": _layer_score_explanation(regime, technical, event, macro_gate, confirmation_state),
+    }
+
+
+def _confluence_score(layer_scores: dict[str, Any], macro_gate: dict[str, Any]) -> dict[str, Any]:
+    regime = int(layer_scores.get("regime") or 0)
+    technical = int(layer_scores.get("technical") or 0)
+    event = int(layer_scores.get("event") or 0)
+    raw = regime + technical + event
+    factor = _as_float(macro_gate.get("factor")) or 1.0
+    final = raw * factor
+    if abs(final) >= 2:
+        state = "actionable"
+    elif abs(final) >= 1:
+        state = "watch"
+    else:
+        state = "mixed"
+    return {
+        "raw": round(raw, 3),
+        "final": round(final, 3),
+        "macroGateFactor": round(factor, 3),
+        "state": state,
+    }
+
+
+def _layer_score_explanation(
+    regime: int,
+    technical: int,
+    event: int,
+    macro_gate: dict[str, Any],
+    confirmation_state: str,
+) -> str:
+    regime_txt = "supportive" if regime > 0 else "hostile" if regime < 0 else "neutral"
+    technical_txt = "constructive" if technical > 0 else "broken" if technical < 0 else "unconfirmed"
+    event_txt = "supportive" if event > 0 else "risk-up" if event < 0 else "neutral"
+    gate_txt = str(macro_gate.get("state") or "neutral-gate")
+    return f"Regime {regime_txt}; technical {technical_txt} ({confirmation_state}); event layer {event_txt}; macro gate {gate_txt}."
+
+
+def _analyst_desk_summary(
+    *,
+    ticker_intel: list[dict[str, Any]],
+    regime_state: str,
+    macro_gate: dict[str, Any],
+    weighted_opportunity: float,
+    weighted_distribution: float,
+    weighted_event_risk: float,
+) -> dict[str, Any]:
+    no_catch = [
+        str(row.get("ticker"))
+        for row in ticker_intel
+        if isinstance(row, dict) and row.get("entryDiscipline") in {"no-catch", "cheap-but-not-ready"}
+    ][:4]
+    confirm_candidates = [
+        str(row.get("ticker"))
+        for row in ticker_intel
+        if isinstance(row, dict) and row.get("confirmationState") in {"failed-breakdown-watch", "reclaiming-resistance"}
+    ][:4]
+    market_read = "Stock-picker tape; broad beta is not enough."
+    if regime_state == "stress":
+        market_read = "Stress tape; confirmation matters more than valuation."
+    elif regime_state == "overheated":
+        market_read = "Crowded tape; strength should be treated as distribution liquidity."
+    elif weighted_opportunity > weighted_distribution + 0.12:
+        market_read = "Dislocation tape; opportunities exist, but only after support behavior confirms."
+
+    next_watch = "Watch open/close behavior around support, not intraday noise."
+    if weighted_event_risk >= 0.55:
+        next_watch = "Watch whether headline risk cools before adding exposure."
+    elif confirm_candidates:
+        next_watch = f"Watch confirmation in {', '.join(confirm_candidates)}."
+
+    return {
+        "marketRead": market_read,
+        "macroGate": macro_gate,
+        "mainRisk": "Adding too early before technical confirmation." if no_catch else "Chasing signals without catalyst confirmation.",
+        "mainOpportunity": "Forced or mechanical selling can create entries if support holds.",
+        "nextThingToWatch": next_watch,
+        "noCatchTickers": no_catch,
+        "confirmationCandidates": confirm_candidates,
+    }
 
 
 def _regime_label(panic: float, crowding: float) -> str:

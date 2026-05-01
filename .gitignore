@@ -12,3 +12,5 @@ node_modules/
 dist/
 build/
 coverage/
+mp3/
+transcripts/

@@ -1794,6 +1794,22 @@ export default function AnalysisPage() {
                               const valuationExplain = valuationExplainSummary(valuation, openbb);
                               const conviction = convictionLabel(row);
                               const convictionView = displaySeverity(conviction.cls);
+                              const layerScores = asRecord(row.layerScores);
+                              const confluence = asRecord(row.confluenceScore);
+                              const macroGate = asRecord(row.macroGate);
+                              const analystRead = asRecord(row.analystRead);
+                              const layerExplanation =
+                                typeof layerScores?.explanation === "string" ? layerScores.explanation : "";
+                              const confluenceFinal = asNumber(confluence?.final);
+                              const confluenceRaw = asNumber(confluence?.raw);
+                              const macroGateFactor = asNumber(confluence?.macroGateFactor) ?? asNumber(macroGate?.factor);
+                              const confluenceState = typeof confluence?.state === "string" ? confluence.state : "mixed";
+                              const macroGateState = typeof macroGate?.state === "string" ? macroGate.state : "neutral-gate";
+                              const macroGateCondition = typeof macroGate?.condition === "string" ? macroGate.condition : "";
+                              const analystThesis = typeof analystRead?.thesis === "string" ? analystRead.thesis : "";
+                              const confirmsIf = typeof analystRead?.confirmsIf === "string" ? analystRead.confirmsIf : "";
+                              const invalidatesIf = typeof analystRead?.invalidatesIf === "string" ? analystRead.invalidatesIf : "";
+                              const whyNow = typeof analystRead?.whyNow === "string" ? analystRead.whyNow : "";
                               const isExpanded = expandedTicker === ticker;
                               return [
                                   <tr key={`row-${ticker}-${idx}`} className="intel-row">
@@ -1884,6 +1900,29 @@ export default function AnalysisPage() {
                                             <div className="note">State {techState} · score {pct(techScore)}</div>
                                             <div className="note">RSI {rsi === null ? "-" : rsi.toFixed(1)} · ADX {adx === null ? "-" : adx.toFixed(1)}</div>
                                             <div className="note">Themes {themes}</div>
+                                          </div>
+                                          <div className="confluence-card">
+                                            <div className="kpi-label">Confluence Engine</div>
+                                            <div className="confluence-score-row">
+                                              <span className="confluence-score">{confluenceFinal === null ? "-" : confluenceFinal.toFixed(1)}</span>
+                                              <span className="chip">{confluenceState}</span>
+                                              <span className="chip">gate {macroGateFactor === null ? "-" : `${macroGateFactor.toFixed(1)}x`}</span>
+                                            </div>
+                                            <div className="layer-strip">
+                                              <span>L1 {asNumber(layerScores?.regime) ?? "-"}</span>
+                                              <span>L2 {asNumber(layerScores?.technical) ?? "-"}</span>
+                                              <span>L3 {asNumber(layerScores?.event) ?? "-"}</span>
+                                              <span>raw {confluenceRaw === null ? "-" : confluenceRaw.toFixed(1)}</span>
+                                            </div>
+                                            <div className="note">{layerExplanation || "Layer explanation is unavailable for this run."}</div>
+                                            <div className="note">Macro gate {macroGateState}. {macroGateCondition}</div>
+                                          </div>
+                                          <div className="analyst-read-card">
+                                            <div className="kpi-label">Analyst Read</div>
+                                            <div className="note">{analystThesis || "No analyst thesis was produced for this run."}</div>
+                                            <div className="note"><strong>Confirms if:</strong> {confirmsIf || "-"}</div>
+                                            <div className="note"><strong>Invalidates if:</strong> {invalidatesIf || "-"}</div>
+                                            <div className="note">{whyNow || "No trigger detail was available."}</div>
                                           </div>
                                         </div>
                                       </td>

@@ -1468,6 +1468,46 @@ a {
   padding: 8px 2px;
 }
 
+.confluence-card,
+.analyst-read-card {
+  border-radius: 14px;
+  background: linear-gradient(145deg, rgba(28, 28, 31, 0.94), rgba(19, 19, 20, 0.9));
+  padding: 12px;
+}
+
+.confluence-score-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 8px 0;
+  flex-wrap: wrap;
+}
+
+.confluence-score {
+  font-family: var(--font-mono), monospace;
+  font-size: 1.8rem;
+  font-weight: 800;
+  letter-spacing: -0.06em;
+  color: var(--accent);
+}
+
+.layer-strip {
+  display: flex;
+  gap: 7px;
+  flex-wrap: wrap;
+  margin-bottom: 8px;
+}
+
+.layer-strip span {
+  border-radius: 999px;
+  background: #232326;
+  color: var(--muted);
+  font-family: var(--font-mono), monospace;
+  font-size: 0.72rem;
+  font-weight: 700;
+  padding: 5px 8px;
+}
+
 table {
   width: 100%;
   border-collapse: collapse;
@@ -1835,9 +1875,20 @@ tbody tr:hover {
 .container.losspulse .signal-item,
 .container.losspulse .watchout-item,
 .container.losspulse .mover,
-.container.losspulse .warning-item {
+.container.losspulse .warning-item,
+.container.losspulse .confluence-card,
+.container.losspulse .analyst-read-card {
   background: #241e30;
   color: #f0ebf8;
+}
+
+.container.losspulse .confluence-score {
+  color: #ff84c8;
+}
+
+.container.losspulse .layer-strip span {
+  background: #312740;
+  color: #d8cdee;
 }
 
 .container.losspulse .note {
