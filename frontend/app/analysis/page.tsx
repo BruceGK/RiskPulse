@@ -807,6 +807,9 @@ export default function AnalysisPage() {
           <Link href="/daily" className="btn secondary terminal-top-action">
             Daily Desk
           </Link>
+          <Link href="/agent" className="btn secondary terminal-top-action">
+            Agent
+          </Link>
           <button className="btn secondary terminal-top-action" onClick={handleShareView} disabled={!positions.length}>
             Share View
           </button>

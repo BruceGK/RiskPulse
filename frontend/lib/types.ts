@@ -69,3 +69,35 @@ export type DailyBriefResponse = {
   agenda: string[];
   analysis: AnalysisResponse;
 };
+
+export type AgentSetup = {
+  ticker: string;
+  setup: string;
+  action: string;
+  bucket: string;
+  score: number;
+  confidence: number;
+  urgency: string;
+  time_horizon: string;
+  why_now: string;
+  confirm_if: string;
+  invalidate_if: string;
+  evidence: Record<string, unknown>;
+  tags: string[];
+  memory: Record<string, unknown>;
+};
+
+export type AgentResponse = {
+  as_of: string;
+  generated_at: string;
+  headline: string;
+  thesis: string;
+  market_state: Record<string, unknown>;
+  priorities: string[];
+  setups: AgentSetup[];
+  confirmed_entries: AgentSetup[];
+  watchlist: AgentSetup[];
+  trim_risks: AgentSetup[];
+  avoid: AgentSetup[];
+  source_daily_brief: DailyBriefResponse;
+};

@@ -23,17 +23,23 @@ jobs:
             exit 0
           fi
           BASE_URL="${RISKPULSE_API_URL%/}"
-          URL="$BASE_URL/api/daily-brief?force=true"
-          STATUS=$(curl -sS -o /tmp/riskpulse-daily-brief.json -w "%{http_code}" "$URL" || true)
-          if [ "$STATUS" = "401" ]; then
-            echo "Daily brief warm-up received 401."
-            echo "RISKPULSE_API_URL should be the public Static Web App URL, not the protected Container App URL."
-            echo "Example: https://red-hill-09659e10f.6.azurestaticapps.net"
-            exit 1
-          fi
-          if [ "$STATUS" -lt 200 ] || [ "$STATUS" -ge 300 ]; then
-            echo "Daily brief warm-up failed with HTTP $STATUS"
-            cat /tmp/riskpulse-daily-brief.json || true
-            exit 1
-          fi
-          echo "Daily brief cache warmed through $BASE_URL"
+          warm_endpoint() {
+            NAME="$1"
+            PATH="$2"
+            OUT="/tmp/riskpulse-${NAME}.json"
+            STATUS=$(curl -sS -o "$OUT" -w "%{http_code}" "$BASE_URL$PATH" || true)
+            if [ "$STATUS" = "401" ]; then
+              echo "$NAME warm-up received 401."
+              echo "RISKPULSE_API_URL should be the public Static Web App URL, not the protected Container App URL."
+              echo "Example: https://red-hill-09659e10f.6.azurestaticapps.net"
+              exit 1
+            fi
+            if [ "$STATUS" -lt 200 ] || [ "$STATUS" -ge 300 ]; then
+              echo "$NAME warm-up failed with HTTP $STATUS"
+              cat "$OUT" || true
+              exit 1
+            fi
+            echo "$NAME warmed through $BASE_URL"
+          }
+          warm_endpoint "daily-brief" "/api/daily-brief?force=true"
+          warm_endpoint "agent" "/api/agent?force=true"

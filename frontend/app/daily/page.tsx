@@ -73,6 +73,9 @@ export default function DailyDeskPage() {
             Portfolio Intelligence
           </Link>
           <nav className="terminal-nav-links">
+            <Link className="terminal-nav-link" href="/agent">
+              Agent
+            </Link>
             <Link className="terminal-nav-link active" href="/daily">
               Daily Desk
             </Link>

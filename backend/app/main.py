@@ -3,10 +3,11 @@ import logging
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.agent import InvestmentAgentService
 from app.analysis import AnalysisService
 from app.config import get_settings
 from app.daily import DailyBriefService
-from app.models import AnalysisRequest, AnalysisResponse, DailyBriefResponse, ValuationRequest, ValuationResponse
+from app.models import AgentResponse, AnalysisRequest, AnalysisResponse, DailyBriefResponse, ValuationRequest, ValuationResponse
 
 settings = get_settings()
 app = FastAPI(title=settings.app_name)
@@ -55,3 +56,13 @@ async def daily_brief(force: bool = Query(default=False)) -> DailyBriefResponse:
     except Exception as exc:
         logger.exception("Daily brief request failed")
         raise HTTPException(status_code=500, detail="Daily brief failed") from exc
+
+
+@app.get(f"{settings.api_prefix}/agent", response_model=AgentResponse)
+async def investment_agent(force: bool = Query(default=False)) -> AgentResponse:
+    try:
+        service = InvestmentAgentService(settings)
+        return await service.get_agent(force=force)
+    except Exception as exc:
+        logger.exception("Investment agent request failed")
+        raise HTTPException(status_code=500, detail="Investment agent failed") from exc

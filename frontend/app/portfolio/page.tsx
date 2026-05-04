@@ -130,6 +130,9 @@ export default function PortfolioPage() {
           <button className="btn secondary terminal-top-action" onClick={() => router.push("/analysis")} disabled={positions.length === 0}>
             {lossMode ? "Open Doom Desk" : "Open Analysis"}
           </button>
+          <button className="btn secondary terminal-top-action" onClick={() => router.push("/agent")}>
+            Agent
+          </button>
         </div>
       </header>
 

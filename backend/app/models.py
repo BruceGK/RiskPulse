@@ -93,6 +93,38 @@ class DailyBriefResponse(BaseModel):
     analysis: AnalysisResponse
 
 
+class AgentSetup(BaseModel):
+    ticker: str
+    setup: str
+    action: str
+    bucket: str
+    score: float
+    confidence: float
+    urgency: str
+    time_horizon: str
+    why_now: str
+    confirm_if: str
+    invalidate_if: str
+    evidence: dict[str, Any] = Field(default_factory=dict)
+    tags: list[str] = Field(default_factory=list)
+    memory: dict[str, Any] = Field(default_factory=dict)
+
+
+class AgentResponse(BaseModel):
+    as_of: date
+    generated_at: str
+    headline: str
+    thesis: str
+    market_state: dict[str, Any]
+    priorities: list[str]
+    setups: list[AgentSetup]
+    confirmed_entries: list[AgentSetup]
+    watchlist: list[AgentSetup]
+    trim_risks: list[AgentSetup]
+    avoid: list[AgentSetup]
+    source_daily_brief: DailyBriefResponse
+
+
 class ValuationPoint(BaseModel):
     ticker: str
     price: float | None = None
