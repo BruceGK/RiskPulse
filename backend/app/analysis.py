@@ -558,7 +558,7 @@ class AnalysisService:
                 valuation_intel=valuation_intel,
                 openbb=openbb,
                 technical=technical,
-                provider=quote_sources.get(p.ticker),
+                provider=str(openbb.get("provider") or "") or None,
             )
             value_lens = _value_lens(
                 openbb=openbb,
