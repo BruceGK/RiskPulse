@@ -3,8 +3,8 @@
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 
-import { analyzePortfolio, getDailyBrief } from "@/lib/api";
-import type { AnalysisResponse, DailyBriefResponse, Position } from "@/lib/types";
+import { analyzePortfolio } from "@/lib/api";
+import type { AnalysisResponse, Position } from "@/lib/types";
 
 const STORAGE_KEY = "riskpulse_positions";
 const UI_PREFS_KEY = "riskpulse_ui_v1";
@@ -258,39 +258,6 @@ export default function AnalysisPage() {
   const [isDemoSeeded, setIsDemoSeeded] = useState(false);
   const [showDemoBanner, setShowDemoBanner] = useState(false);
   const [prefsHydrated, setPrefsHydrated] = useState(false);
-  const [dailyBrief, setDailyBrief] = useState<DailyBriefResponse | null>(null);
-  const [dailyBriefLoading, setDailyBriefLoading] = useState(false);
-  const [dailyBriefError, setDailyBriefError] = useState("");
-
-  const loadDailyBrief = async (force = false) => {
-    setDailyBriefLoading(true);
-    setDailyBriefError("");
-    try {
-      const brief = await getDailyBrief(force);
-      setDailyBrief(brief);
-    } catch (e) {
-      setDailyBriefError((e as Error).message || "Daily desk unavailable");
-    } finally {
-      setDailyBriefLoading(false);
-    }
-  };
-
-  const useDailyDeskBasket = () => {
-    if (!dailyBrief?.selected?.length) return;
-    const nextPositions = dailyBrief.selected.map((row) => ({
-      ticker: row.ticker,
-      qty: 1,
-      asset_type: ["SPY", "QQQ", "IWM", "SMH", "SOXX"].includes(row.ticker) ? "etf" : "stock",
-    }));
-    setPositions(nextPositions);
-    setAnalysis(dailyBrief.analysis);
-    setActiveTab("overview");
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(nextPositions));
-  };
-
-  useEffect(() => {
-    loadDailyBrief(false);
-  }, []);
 
   useEffect(() => {
     let hasUrlTab = false;
@@ -837,6 +804,9 @@ export default function AnalysisPage() {
           <Link href="/portfolio" className="btn secondary terminal-top-action">
             Edit Portfolio
           </Link>
+          <Link href="/daily" className="btn secondary terminal-top-action">
+            Daily Desk
+          </Link>
           <button className="btn secondary terminal-top-action" onClick={handleShareView} disabled={!positions.length}>
             Share View
           </button>
@@ -891,55 +861,6 @@ export default function AnalysisPage() {
             : "Could not access clipboard; manual copy dialog opened."}
         </div>
       )}
-
-      <section className="daily-desk-panel">
-        <div className="daily-desk-copy">
-          <div className="terminal-overline">Daily Analyst Desk</div>
-          <h2>{dailyBrief?.headline || "Auto-selecting today’s tape..."}</h2>
-          <p>
-            {dailyBrief?.thesis ||
-              "RiskPulse is building the same kind of daily watchlist pass a market commentator would prep before recording: index tape, high-attention single names, and confluence notes."}
-          </p>
-          {dailyBriefError && <div className="signal-meta danger">Daily desk unavailable: {dailyBriefError}</div>}
-          <div className="daily-desk-actions">
-            <button className="btn primary" type="button" onClick={useDailyDeskBasket} disabled={!dailyBrief?.selected?.length}>
-              Load Desk Basket
-            </button>
-            <button className="btn secondary" type="button" onClick={() => loadDailyBrief(true)} disabled={dailyBriefLoading}>
-              {dailyBriefLoading ? "Refreshing Desk..." : "Refresh Daily Desk"}
-            </button>
-            {dailyBrief && <span className="signal-meta">Generated {new Date(dailyBrief.generated_at).toLocaleString()}</span>}
-          </div>
-        </div>
-        <div className="daily-desk-board">
-          {(dailyBrief?.selected || []).slice(0, 6).map((row) => (
-            <article className="daily-desk-ticker" key={row.ticker}>
-              <div className="daily-desk-ticker-top">
-                <strong>{row.ticker}</strong>
-                <span>{row.score.toFixed(2)}</span>
-              </div>
-              <div className="daily-desk-moves">
-                <span>1D {pct(row.move_1d)}</span>
-                <span>5D {pct(row.move_5d)}</span>
-              </div>
-              <p>{row.reason}</p>
-            </article>
-          ))}
-          {!dailyBrief?.selected?.length && (
-            <article className="daily-desk-ticker skeleton">
-              <strong>{dailyBriefLoading ? "Desk warming up" : "No desk data yet"}</strong>
-              <p>Waiting on the automated selection run.</p>
-            </article>
-          )}
-        </div>
-        {dailyBrief?.agenda?.length ? (
-          <div className="daily-desk-agenda">
-            {dailyBrief.agenda.slice(0, 3).map((item) => (
-              <span key={item}>{item}</span>
-            ))}
-          </div>
-        ) : null}
-      </section>
 
       {analysis && (
         <section className="terminal-stat-row">

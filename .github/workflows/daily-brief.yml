@@ -1,6 +1,10 @@
-name: Warm Daily Analyst Desk
+name: Daily Analyst Desk
 
 on:
+  push:
+    branches: ["main"]
+    paths:
+      - ".github/workflows/daily-brief.yml"
   schedule:
     # 13:45 UTC is 9:45am New York during US daylight saving time.
     - cron: "45 13 * * 1-5"

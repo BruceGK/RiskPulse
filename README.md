@@ -12,6 +12,7 @@ RiskPulse is an Azure-ready portfolio intelligence app that combines market data
 - Portfolio workflow:
   - add/edit positions on `/portfolio`
   - run full analysis on `/analysis`
+  - open the automated daily analyst desk on `/daily`
   - shareable analysis links
 - Analysis engine:
   - `POST /api/analyze` with `quick` and `full` phases

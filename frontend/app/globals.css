@@ -472,6 +472,86 @@ a {
   line-height: 1.35;
 }
 
+.daily-hero {
+  display: grid;
+  grid-template-columns: minmax(0, 1.35fr) minmax(280px, 0.65fr);
+  gap: 18px;
+  margin-bottom: 18px;
+  padding: clamp(24px, 4vw, 42px);
+  border-radius: 28px;
+  background:
+    radial-gradient(circle at 8% 8%, rgba(63, 255, 139, 0.16), transparent 28%),
+    radial-gradient(circle at 88% 2%, rgba(80, 145, 255, 0.16), transparent 32%),
+    linear-gradient(145deg, rgba(27, 27, 29, 0.98), rgba(12, 13, 14, 0.98));
+  box-shadow: var(--shadow-soft);
+}
+
+.daily-hero h1 {
+  max-width: 980px;
+  margin-top: 8px;
+  font-size: clamp(2.1rem, 5vw, 4.6rem);
+  line-height: 0.92;
+  letter-spacing: -0.075em;
+}
+
+.daily-hero p {
+  max-width: 840px;
+  margin-top: 14px;
+  color: var(--muted);
+  font-size: 1.02rem;
+  line-height: 1.5;
+}
+
+.daily-hero-metrics {
+  display: grid;
+  gap: 10px;
+  align-content: end;
+}
+
+.daily-hero-metrics article {
+  border-radius: 18px;
+  padding: 16px;
+  background: rgba(255, 255, 255, 0.045);
+}
+
+.daily-hero-metrics span {
+  display: block;
+  color: var(--muted);
+  font-size: 0.76rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.daily-hero-metrics strong {
+  display: block;
+  margin-top: 6px;
+  font-family: var(--font-mono), monospace;
+  font-size: 1.45rem;
+  color: var(--accent);
+}
+
+.daily-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.35fr) minmax(300px, 0.65fr);
+  gap: 18px;
+  margin-bottom: 18px;
+}
+
+.daily-page-board {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.daily-agenda-list {
+  display: grid;
+  gap: 10px;
+}
+
+.daily-model-notes {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
 .signal-meta.danger {
   color: var(--danger);
 }
@@ -2173,6 +2253,8 @@ tbody tr:hover {
   .lead-grid.with-pulse,
   .builder-layout,
   .daily-desk-panel,
+  .daily-hero,
+  .daily-grid,
   .builder-form-row,
   .terminal-stat-row,
   .form-grid,
@@ -2188,7 +2270,8 @@ tbody tr:hover {
   }
 
   .daily-desk-board,
-  .daily-desk-agenda {
+  .daily-desk-agenda,
+  .daily-model-notes {
     grid-template-columns: 1fr;
   }
 
