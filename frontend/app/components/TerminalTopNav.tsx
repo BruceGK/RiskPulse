@@ -50,6 +50,26 @@ export default function TerminalTopNav({
     localStorage.setItem(SURFACE_MODE_KEY, nextMode);
   };
 
+  const surfaceToggle = (
+    <div className="terminal-surface-toggle" aria-label="Surface mode">
+      <span className="terminal-surface-label">Theme</span>
+      <button
+        className={`terminal-surface-pill ${surfaceMode === "dark" ? "active" : ""}`}
+        onClick={() => updateSurfaceMode("dark")}
+        type="button"
+      >
+        Dark
+      </button>
+      <button
+        className={`terminal-surface-pill ${surfaceMode === "light" ? "active" : ""}`}
+        onClick={() => updateSurfaceMode("light")}
+        type="button"
+      >
+        Light
+      </button>
+    </div>
+  );
+
   return (
     <header className="terminal-topnav">
       <div className="terminal-topnav-left">
@@ -75,23 +95,14 @@ export default function TerminalTopNav({
       </div>
       <div className="terminal-topnav-right">
         {status ? <div className={`terminal-context-chip ${isLoss ? "loss" : "risk"}`}>{status}</div> : null}
-        <div className="terminal-surface-toggle" aria-label="Surface mode">
-          <button
-            className={`terminal-surface-pill ${surfaceMode === "dark" ? "active" : ""}`}
-            onClick={() => updateSurfaceMode("dark")}
-            type="button"
-          >
-            Dark
-          </button>
-          <button
-            className={`terminal-surface-pill ${surfaceMode === "light" ? "active" : ""}`}
-            onClick={() => updateSurfaceMode("light")}
-            type="button"
-          >
-            Light
-          </button>
-        </div>
-        {children ? <div className="terminal-action-group">{children}</div> : null}
+        {children ? (
+          <div className="terminal-action-group">
+            {surfaceToggle}
+            {children}
+          </div>
+        ) : (
+          surfaceToggle
+        )}
       </div>
     </header>
   );

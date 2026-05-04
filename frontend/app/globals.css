@@ -224,11 +224,21 @@ a {
 
 .terminal-surface-toggle {
   display: inline-flex;
+  align-items: center;
   gap: 4px;
   padding: 4px;
   border-radius: 999px;
   background: rgba(255, 255, 255, 0.04);
   box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.055);
+}
+
+.terminal-surface-label {
+  color: var(--muted);
+  padding: 0 6px 0 8px;
+  font-size: 0.62rem;
+  font-weight: 900;
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
 }
 
 .terminal-surface-pill {
@@ -2668,6 +2678,10 @@ body.surface-light .terminal-loss .terminal-nav-link.active {
 body.surface-light .terminal-surface-pill.active {
   background: #191c1e;
   color: #ffffff;
+}
+
+body.surface-light .terminal-surface-label {
+  color: #6c7a71;
 }
 
 body.surface-light .terminal-sidebar {
