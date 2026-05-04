@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import type { ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 
 type NavKey = "analysis" | "daily" | "agent" | "builder";
 
@@ -20,6 +20,8 @@ const navItems: Array<{ key: NavKey; href: string; label: string }> = [
   { key: "builder", href: "/portfolio", label: "Builder" }
 ];
 
+const SURFACE_MODE_KEY = "riskpulse_surface_mode";
+
 export default function TerminalTopNav({
   active,
   children,
@@ -28,6 +30,25 @@ export default function TerminalTopNav({
   status
 }: TerminalTopNavProps) {
   const isLoss = mode === "loss";
+  const [surfaceMode, setSurfaceMode] = useState<"dark" | "light">("light");
+
+  useEffect(() => {
+    const saved = localStorage.getItem(SURFACE_MODE_KEY);
+    const nextMode =
+      saved === "dark" || saved === "light"
+        ? saved
+        : document.body.classList.contains("surface-light")
+          ? "light"
+          : "dark";
+    setSurfaceMode(nextMode);
+    document.body.classList.toggle("surface-light", nextMode === "light");
+  }, []);
+
+  const updateSurfaceMode = (nextMode: "dark" | "light") => {
+    setSurfaceMode(nextMode);
+    document.body.classList.toggle("surface-light", nextMode === "light");
+    localStorage.setItem(SURFACE_MODE_KEY, nextMode);
+  };
 
   return (
     <header className="terminal-topnav">
@@ -54,6 +75,22 @@ export default function TerminalTopNav({
       </div>
       <div className="terminal-topnav-right">
         {status ? <div className={`terminal-context-chip ${isLoss ? "loss" : "risk"}`}>{status}</div> : null}
+        <div className="terminal-surface-toggle" aria-label="Surface mode">
+          <button
+            className={`terminal-surface-pill ${surfaceMode === "dark" ? "active" : ""}`}
+            onClick={() => updateSurfaceMode("dark")}
+            type="button"
+          >
+            Dark
+          </button>
+          <button
+            className={`terminal-surface-pill ${surfaceMode === "light" ? "active" : ""}`}
+            onClick={() => updateSurfaceMode("light")}
+            type="button"
+          >
+            Light
+          </button>
+        </div>
         {children ? <div className="terminal-action-group">{children}</div> : null}
       </div>
     </header>
