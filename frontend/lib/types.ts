@@ -49,3 +49,23 @@ export type AnalysisResponse = {
   notes: string[];
   meta: Record<string, unknown>;
 };
+
+export type DailyBriefTicker = {
+  ticker: string;
+  score: number;
+  move_1d: number | null;
+  move_5d: number | null;
+  technical_state: string;
+  reason: string;
+};
+
+export type DailyBriefResponse = {
+  as_of: string;
+  generated_at: string;
+  universe: string[];
+  selected: DailyBriefTicker[];
+  headline: string;
+  thesis: string;
+  agenda: string[];
+  analysis: AnalysisResponse;
+};

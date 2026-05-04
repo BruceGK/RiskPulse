@@ -16,6 +16,7 @@ RiskPulse is an Azure-ready portfolio intelligence app that combines market data
 - Analysis engine:
   - `POST /api/analyze` with `quick` and `full` phases
   - `POST /api/valuation` for ticker-level intrinsic value pass
+  - `GET /api/daily-brief` for an automated daily analyst desk and selected watchlist basket
   - concentration, volatility, drawdown, regime, and scenario outputs
   - ticker intelligence (tech state, value view, action bias, confidence)
   - headline/event integration for macro and holdings
@@ -32,6 +33,7 @@ RiskPulse is an Azure-ready portfolio intelligence app that combines market data
 ## API Surface
 - `POST /api/analyze`
 - `POST /api/valuation`
+- `GET /api/daily-brief`
 - `GET /health`
 
 Example analyze request:
@@ -73,6 +75,10 @@ docker compose up --build
 - **SWA backend link** routes frontend `/api/*` to the backend service.
 
 This repository includes GitHub Actions workflows for frontend and backend deployment. Credentials and provider keys must be configured as repository/environment secrets in your own Azure subscription and are intentionally not documented here with account-specific steps.
+
+Optional daily automation:
+- Set repository variable `RISKPULSE_API_URL` to the backend base URL, for example the Azure Container Apps URL.
+- The `Warm Daily Analyst Desk` workflow calls `/api/daily-brief?force=true` on weekdays after the US market opens to refresh the automated watchlist briefing.
 
 ## Engineering Notes
 - Prefer licensed APIs for production-quality data.

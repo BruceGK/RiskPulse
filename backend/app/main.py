@@ -5,7 +5,8 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.analysis import AnalysisService
 from app.config import get_settings
-from app.models import AnalysisRequest, AnalysisResponse, ValuationRequest, ValuationResponse
+from app.daily import DailyBriefService
+from app.models import AnalysisRequest, AnalysisResponse, DailyBriefResponse, ValuationRequest, ValuationResponse
 
 settings = get_settings()
 app = FastAPI(title=settings.app_name)
@@ -44,3 +45,13 @@ async def valuation(payload: ValuationRequest) -> ValuationResponse:
     except Exception as exc:
         logger.exception("Valuation request failed")
         raise HTTPException(status_code=500, detail="Valuation failed") from exc
+
+
+@app.get(f"{settings.api_prefix}/daily-brief", response_model=DailyBriefResponse)
+async def daily_brief(force: bool = Query(default=False)) -> DailyBriefResponse:
+    try:
+        service = DailyBriefService(settings)
+        return await service.get_brief(force=force)
+    except Exception as exc:
+        logger.exception("Daily brief request failed")
+        raise HTTPException(status_code=500, detail="Daily brief failed") from exc

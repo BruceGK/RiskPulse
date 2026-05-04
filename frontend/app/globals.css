@@ -367,6 +367,115 @@ a {
   color: var(--danger);
 }
 
+.daily-desk-panel {
+  display: grid;
+  grid-template-columns: minmax(320px, 0.9fr) minmax(420px, 1.1fr);
+  gap: 16px;
+  margin-bottom: 18px;
+  padding: 18px;
+  border-radius: 20px;
+  background:
+    radial-gradient(circle at 12% 0%, rgba(63, 255, 139, 0.12), transparent 34%),
+    radial-gradient(circle at 100% 15%, rgba(91, 140, 255, 0.12), transparent 34%),
+    linear-gradient(145deg, rgba(26, 25, 27, 0.98), rgba(16, 17, 18, 0.96));
+  box-shadow: var(--shadow-soft);
+}
+
+.daily-desk-copy h2 {
+  margin-top: 8px;
+  max-width: 780px;
+  font-size: clamp(1.45rem, 2.6vw, 2.45rem);
+  line-height: 0.98;
+  letter-spacing: -0.05em;
+}
+
+.daily-desk-copy p {
+  margin-top: 10px;
+  max-width: 720px;
+  color: var(--muted);
+  line-height: 1.45;
+}
+
+.daily-desk-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.daily-desk-board {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  min-width: 0;
+}
+
+.daily-desk-ticker {
+  min-width: 0;
+  border-radius: 16px;
+  padding: 13px;
+  background:
+    radial-gradient(circle at top right, rgba(63, 255, 139, 0.08), transparent 42%),
+    rgba(20, 20, 22, 0.88);
+}
+
+.daily-desk-ticker.skeleton {
+  grid-column: 1 / -1;
+}
+
+.daily-desk-ticker-top,
+.daily-desk-moves {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.daily-desk-ticker-top strong {
+  font-family: var(--font-mono), monospace;
+  font-size: 1rem;
+}
+
+.daily-desk-ticker-top span {
+  color: var(--accent);
+  font-family: var(--font-mono), monospace;
+  font-weight: 800;
+}
+
+.daily-desk-moves {
+  margin-top: 9px;
+  color: var(--muted);
+  font-family: var(--font-mono), monospace;
+  font-size: 0.72rem;
+}
+
+.daily-desk-ticker p {
+  margin-top: 9px;
+  color: #e5e9ee;
+  font-size: 0.82rem;
+  line-height: 1.35;
+}
+
+.daily-desk-agenda {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.daily-desk-agenda span {
+  border-radius: 14px;
+  padding: 11px 12px;
+  background: rgba(255, 255, 255, 0.045);
+  color: #dce2e9;
+  font-size: 0.84rem;
+  line-height: 1.35;
+}
+
+.signal-meta.danger {
+  color: var(--danger);
+}
+
 .builder-layout {
   display: grid;
   grid-template-columns: minmax(0, 1.45fr) minmax(300px, 0.75fr);
@@ -2063,6 +2172,7 @@ tbody tr:hover {
   .grid.cards,
   .lead-grid.with-pulse,
   .builder-layout,
+  .daily-desk-panel,
   .builder-form-row,
   .terminal-stat-row,
   .form-grid,
@@ -2075,6 +2185,11 @@ tbody tr:hover {
 
   .analyst-read-card {
     grid-column: auto;
+  }
+
+  .daily-desk-board,
+  .daily-desk-agenda {
+    grid-template-columns: 1fr;
   }
 
   .topbar {

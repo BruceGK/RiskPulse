@@ -73,6 +73,26 @@ class AnalysisResponse(BaseModel):
     meta: dict[str, Any]
 
 
+class DailyBriefTicker(BaseModel):
+    ticker: str
+    score: float
+    move_1d: float | None = None
+    move_5d: float | None = None
+    technical_state: str = "unknown"
+    reason: str
+
+
+class DailyBriefResponse(BaseModel):
+    as_of: date
+    generated_at: str
+    universe: list[str]
+    selected: list[DailyBriefTicker]
+    headline: str
+    thesis: str
+    agenda: list[str]
+    analysis: AnalysisResponse
+
+
 class ValuationPoint(BaseModel):
     ticker: str
     price: float | None = None

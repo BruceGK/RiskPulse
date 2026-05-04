@@ -1,0 +1,21 @@
+name: Warm Daily Analyst Desk
+
+on:
+  schedule:
+    # 13:45 UTC is 9:45am New York during US daylight saving time.
+    - cron: "45 13 * * 1-5"
+  workflow_dispatch:
+
+jobs:
+  warm:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Warm daily brief cache
+        env:
+          RISKPULSE_API_URL: ${{ vars.RISKPULSE_API_URL }}
+        run: |
+          if [ -z "$RISKPULSE_API_URL" ]; then
+            echo "Set repository variable RISKPULSE_API_URL to your backend base URL to enable scheduled daily brief warming."
+            exit 0
+          fi
+          curl -fsS "$RISKPULSE_API_URL/api/daily-brief?force=true"

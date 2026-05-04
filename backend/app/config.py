@@ -23,6 +23,9 @@ class Settings(BaseSettings):
     max_positions_for_intel: int = 8
     max_ticker_news_symbols: int = 5
     ticker_news_per_symbol: int = 5
+    daily_brief_watchlist: str = "SPY,QQQ,IWM,NVDA,MSFT,AAPL,META,AMZN,GOOGL,TSLA,AMD,AVGO,QCOM,MU,LLY"
+    daily_brief_ticker_count: int = 6
+    daily_brief_cache_ttl_seconds: int = 21600
 
     polygon_api_key: str = ""
     fmp_api_key: str = ""

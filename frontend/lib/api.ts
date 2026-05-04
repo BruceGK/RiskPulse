@@ -1,4 +1,4 @@
-import type { AnalysisRequest, AnalysisResponse } from "@/lib/types";
+import type { AnalysisRequest, AnalysisResponse, DailyBriefResponse } from "@/lib/types";
 
 const RAW_API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL;
 const API_BASE_URL = RAW_API_BASE_URL ? RAW_API_BASE_URL.replace(/\/$/, "") : "";
@@ -21,4 +21,18 @@ export async function analyzePortfolio(payload: AnalysisRequest, options?: Analy
   }
 
   return (await response.json()) as AnalysisResponse;
+}
+
+export async function getDailyBrief(force = false): Promise<DailyBriefResponse> {
+  const endpoint = API_BASE_URL ? `${API_BASE_URL}/api/daily-brief?force=${force}` : `/api/daily-brief?force=${force}`;
+  const response = await fetch(endpoint, {
+    method: "GET",
+    headers: { "Content-Type": "application/json" }
+  });
+
+  if (!response.ok) {
+    throw new Error(`Backend error (${response.status})`);
+  }
+
+  return (await response.json()) as DailyBriefResponse;
 }
