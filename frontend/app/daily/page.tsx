@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 
+import TerminalTopNav from "@/app/components/TerminalTopNav";
 import { getDailyBrief } from "@/lib/api";
 import type { DailyBriefResponse, Position } from "@/lib/types";
 
@@ -67,35 +68,14 @@ export default function DailyDeskPage() {
 
   return (
     <div className="terminal-app terminal-risk">
-      <header className="terminal-topnav">
-        <div className="terminal-topnav-left">
-          <Link href="/analysis" className="terminal-wordmark">
-            Portfolio Intelligence
-          </Link>
-          <nav className="terminal-nav-links">
-            <Link className="terminal-nav-link" href="/agent">
-              Agent
-            </Link>
-            <Link className="terminal-nav-link active" href="/daily">
-              Daily Desk
-            </Link>
-            <Link className="terminal-nav-link" href="/analysis">
-              Portfolio Analysis
-            </Link>
-            <Link className="terminal-nav-link" href="/portfolio">
-              Builder
-            </Link>
-          </nav>
-        </div>
-        <div className="terminal-topnav-right">
-          <button className="btn secondary terminal-top-action" onClick={() => loadBrief(true)} disabled={refreshing}>
-            {refreshing ? "Refreshing..." : "Refresh Desk"}
-          </button>
-          <button className="btn primary terminal-top-action" onClick={applyToPortfolio} disabled={!brief?.selected?.length}>
-            Analyze This Basket
-          </button>
-        </div>
-      </header>
+      <TerminalTopNav active="daily" section="Daily Desk" status="Auto Brief">
+        <button className="btn secondary terminal-top-action" onClick={() => loadBrief(true)} disabled={refreshing}>
+          {refreshing ? "Refreshing..." : "Refresh"}
+        </button>
+        <button className="btn primary terminal-top-action" onClick={applyToPortfolio} disabled={!brief?.selected?.length}>
+          Analyze Basket
+        </button>
+      </TerminalTopNav>
 
       <aside className="terminal-sidebar">
         <div className="terminal-sidebar-brand">

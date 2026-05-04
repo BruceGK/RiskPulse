@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 
+import TerminalTopNav from "@/app/components/TerminalTopNav";
 import type { Position } from "@/lib/types";
 
 const STORAGE_KEY = "riskpulse_positions";
@@ -85,56 +86,41 @@ export default function PortfolioPage() {
 
   const useSamples = () => setPositions(SAMPLE);
   const clearAll = () => setPositions([]);
-  const seriousPrimaryNav = ["Dashboard", "Risk Analysis", "Strategies", "History"];
   const sidebarItems = lossMode
     ? ["Overview", "Terminal", "Builder", "Doom Scenarios", "Reports"]
     : ["Overview", "Terminal", "Builder", "Signals", "Reports"];
 
   return (
     <div className={`terminal-app ${lossMode ? "terminal-loss" : "terminal-risk"}`}>
-      <header className="terminal-topnav">
-        <div className="terminal-topnav-left">
-          <div className="terminal-wordmark">{lossMode ? "LossPulse Intelligence" : "Portfolio Intelligence"}</div>
-          <nav className="terminal-nav-links">
-            {seriousPrimaryNav.map((item) => (
-              <span className={`terminal-nav-link ${item === "Dashboard" ? "active" : ""}`} key={item}>
-                {item}
-              </span>
-            ))}
-          </nav>
-        </div>
-        <div className="terminal-topnav-right">
-          <div className="terminal-search-shell">
-            <span className="terminal-search-icon">⌕</span>
-            <input className="terminal-search-input" placeholder="Search Terminal..." aria-label="Search terminal" />
-          </div>
-          <div className={`terminal-mode-badge ${lossMode ? "loss" : "risk"}`}>
-            {lossMode ? "LossPulse Pro Active" : "Pro View Active"}
-          </div>
-          <div className="terminal-theme-toggle">
-            <button
-              className={`terminal-theme-pill ${!lossMode ? "active" : ""}`}
-              onClick={() => setLossMode(false)}
-              type="button"
-            >
-              Serious
-            </button>
-            <button
-              className={`terminal-theme-pill ${lossMode ? "active" : ""}`}
-              onClick={() => setLossMode(true)}
-              type="button"
-            >
-              Satirical
-            </button>
-          </div>
-          <button className="btn secondary terminal-top-action" onClick={() => router.push("/analysis")} disabled={positions.length === 0}>
-            {lossMode ? "Open Doom Desk" : "Open Analysis"}
+      <TerminalTopNav
+        active="builder"
+        mode={lossMode ? "loss" : "risk"}
+        section={lossMode ? "Bag Builder" : "Portfolio Builder"}
+        status={`${positions.length} ${positions.length === 1 ? "Position" : "Positions"}`}
+      >
+        <div className="terminal-theme-toggle">
+          <button
+            className={`terminal-theme-pill ${!lossMode ? "active" : ""}`}
+            onClick={() => setLossMode(false)}
+            type="button"
+          >
+            Serious
           </button>
-          <button className="btn secondary terminal-top-action" onClick={() => router.push("/agent")}>
-            Agent
+          <button
+            className={`terminal-theme-pill ${lossMode ? "active" : ""}`}
+            onClick={() => setLossMode(true)}
+            type="button"
+          >
+            Satirical
           </button>
         </div>
-      </header>
+        <button className="btn secondary terminal-top-action" onClick={() => router.push("/agent")}>
+          Agent
+        </button>
+        <button className="btn primary terminal-top-action" onClick={() => router.push("/analysis")} disabled={positions.length === 0}>
+          {lossMode ? "Doom Desk" : "Analyze"}
+        </button>
+      </TerminalTopNav>
 
       <aside className="terminal-sidebar">
         <div className="terminal-sidebar-brand">

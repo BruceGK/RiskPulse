@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 
+import TerminalTopNav from "@/app/components/TerminalTopNav";
 import { getInvestmentAgent } from "@/lib/api";
 import type { AgentResponse, AgentSetup, Position } from "@/lib/types";
 
@@ -131,35 +132,14 @@ export default function InvestmentAgentPage() {
 
   return (
     <div className="terminal-app terminal-risk">
-      <header className="terminal-topnav">
-        <div className="terminal-topnav-left">
-          <Link href="/agent" className="terminal-wordmark">
-            RiskPulse Agent
-          </Link>
-          <nav className="terminal-nav-links">
-            <Link className="terminal-nav-link active" href="/agent">
-              Agent
-            </Link>
-            <Link className="terminal-nav-link" href="/daily">
-              Daily Desk
-            </Link>
-            <Link className="terminal-nav-link" href="/analysis">
-              Portfolio Analysis
-            </Link>
-            <Link className="terminal-nav-link" href="/portfolio">
-              Builder
-            </Link>
-          </nav>
-        </div>
-        <div className="terminal-topnav-right">
-          <button className="btn secondary terminal-top-action" onClick={() => loadAgent(true)} disabled={refreshing || loading}>
-            {refreshing ? "Thinking..." : "Refresh Agent"}
-          </button>
-          <button className="btn primary terminal-top-action" onClick={applyBasket} disabled={!agent}>
-            Analyze Agent Basket
-          </button>
-        </div>
-      </header>
+      <TerminalTopNav active="agent" section="Opportunity Agent" status="Observe Mode">
+        <button className="btn secondary terminal-top-action" onClick={() => loadAgent(true)} disabled={refreshing || loading}>
+          {refreshing ? "Thinking..." : "Refresh"}
+        </button>
+        <button className="btn primary terminal-top-action" onClick={applyBasket} disabled={!agent}>
+          Analyze Basket
+        </button>
+      </TerminalTopNav>
 
       <aside className="terminal-sidebar">
         <div className="terminal-sidebar-brand">

@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 
+import TerminalTopNav from "@/app/components/TerminalTopNav";
 import { analyzePortfolio } from "@/lib/api";
 import type { AnalysisResponse, Position } from "@/lib/types";
 
@@ -773,51 +774,28 @@ export default function AnalysisPage() {
       window.prompt("Copy this share link:", url);
     }
   };
-  const primaryNav = ["Dashboard", "Risk Analysis", "Strategies", "History"];
   const sidebarItems = lossMode
     ? ["Overview", "Terminal", "Builder", "Doom Scenarios", "Reports"]
     : ["Overview", "Terminal", "Builder", "Signals", "Reports"];
 
   return (
     <div className={`terminal-app ${lossMode ? "terminal-loss" : "terminal-risk"}`}>
-      <header className="terminal-topnav">
-        <div className="terminal-topnav-left">
-          <Link href="/analysis" className="terminal-wordmark">
-            {lossMode ? "LossPulse Intelligence" : "Portfolio Intelligence"}
-          </Link>
-          <nav className="terminal-nav-links">
-            {primaryNav.map((item) => (
-              <span className={`terminal-nav-link ${item === "Dashboard" ? "active" : ""}`} key={item}>
-                {item}
-              </span>
-            ))}
-          </nav>
-        </div>
-        <div className="terminal-topnav-right">
-          <div className="terminal-search-shell">
-            <span className="terminal-search-icon">⌕</span>
-            <input className="terminal-search-input" placeholder="Search Terminal..." aria-label="Search terminal" />
-          </div>
-          <div className={`terminal-mode-badge ${lossMode ? "loss" : "risk"}`}>
-            {lossMode ? "LossPulse Pro Active" : "Pro View Active"}
-          </div>
-          <Link href="/portfolio" className="btn secondary terminal-top-action">
-            Edit Portfolio
-          </Link>
-          <Link href="/daily" className="btn secondary terminal-top-action">
-            Daily Desk
-          </Link>
-          <Link href="/agent" className="btn secondary terminal-top-action">
-            Agent
-          </Link>
-          <button className="btn secondary terminal-top-action" onClick={handleShareView} disabled={!positions.length}>
-            Share View
-          </button>
-          <button className="btn secondary terminal-top-action" onClick={() => setRefreshTick((n) => n + 1)} disabled={loading || !positions.length}>
-            {loadPhase === "quick" ? "Loading Quick Pass..." : loadPhase === "full" ? "Hydrating Deep Analysis..." : "Refresh Analysis"}
-          </button>
-        </div>
-      </header>
+      <TerminalTopNav
+        active="analysis"
+        mode={lossMode ? "loss" : "risk"}
+        section={lossMode ? "Satirical Analysis" : "Portfolio Analysis"}
+        status={lossMode ? "Chaos Mode" : "Live Model"}
+      >
+        <Link href="/portfolio" className="btn secondary terminal-top-action">
+          Edit
+        </Link>
+        <button className="btn secondary terminal-top-action" onClick={handleShareView} disabled={!positions.length}>
+          Share
+        </button>
+        <button className="btn primary terminal-top-action" onClick={() => setRefreshTick((n) => n + 1)} disabled={loading || !positions.length}>
+          {loadPhase === "quick" ? "Quick Pass..." : loadPhase === "full" ? "Deep Pass..." : "Refresh"}
+        </button>
+      </TerminalTopNav>
 
       <aside className="terminal-sidebar">
         <div className="terminal-sidebar-brand">
