@@ -4,9 +4,10 @@ import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 
 import TerminalTopNav from "@/app/components/TerminalTopNav";
+import { STORAGE_KEY } from "@/lib/constants";
+import { clamp01 } from "@/lib/format";
 import type { Position } from "@/lib/types";
 
-const STORAGE_KEY = "riskpulse_positions";
 const THEME_MODE_KEY = "riskpulse_theme_mode";
 
 const SAMPLE: Position[] = [
@@ -14,10 +15,6 @@ const SAMPLE: Position[] = [
   { ticker: "MSFT", qty: 5, asset_type: "stock" },
   { ticker: "SPY", qty: 6, asset_type: "etf" }
 ];
-
-function clamp01(value: number): number {
-  return Math.max(0, Math.min(1, value));
-}
 
 export default function PortfolioPage() {
   const router = useRouter();

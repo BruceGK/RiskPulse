@@ -5,9 +5,19 @@ import { useEffect, useMemo, useRef, useState } from "react";
 
 import TerminalTopNav from "@/app/components/TerminalTopNav";
 import { analyzePortfolio } from "@/lib/api";
+import { STORAGE_KEY } from "@/lib/constants";
+import {
+  asNumber,
+  asRecord,
+  asRecordArray,
+  asStringArray,
+  bp,
+  clamp01,
+  money,
+  pct,
+} from "@/lib/format";
 import type { AnalysisResponse, Position } from "@/lib/types";
 
-const STORAGE_KEY = "riskpulse_positions";
 const UI_PREFS_KEY = "riskpulse_ui_v1";
 const THEME_MODE_KEY = "riskpulse_theme_mode";
 const UI_PREFS_MAX_AGE_MS = 1000 * 60 * 60 * 24 * 30;
@@ -62,43 +72,6 @@ function isLayoutMode(value: string | null): value is LayoutMode {
   return value === "focus" || value === "pro";
 }
 
-function pct(value: number | null | undefined): string {
-  if (value === null || value === undefined) return "-";
-  return `${(value * 100).toFixed(2)}%`;
-}
-
-function bp(value: number | null | undefined): string {
-  if (value === null || value === undefined) return "-";
-  return `${value.toFixed(1)} bp`;
-}
-
-function money(value: number | null | undefined): string {
-  if (value === null || value === undefined) return "-";
-  return `$${value.toLocaleString(undefined, { maximumFractionDigits: 2 })}`;
-}
-
-function asRecord(value: unknown): Record<string, unknown> | null {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
-  return value as Record<string, unknown>;
-}
-
-function asStringArray(value: unknown): string[] {
-  if (!Array.isArray(value)) return [];
-  return value.filter((item): item is string => typeof item === "string" && item.trim().length > 0);
-}
-
-function asRecordArray(value: unknown): Record<string, unknown>[] {
-  if (!Array.isArray(value)) return [];
-  return value.filter((item): item is Record<string, unknown> => !!item && typeof item === "object" && !Array.isArray(item));
-}
-
-function asNumber(value: unknown): number | null {
-  return typeof value === "number" && Number.isFinite(value) ? value : null;
-}
-
-function clamp01(value: number): number {
-  return Math.max(0, Math.min(1, value));
-}
 
 function hashString(input: string): number {
   let hash = 0;

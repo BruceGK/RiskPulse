@@ -11,6 +11,7 @@ from app.providers.market import MarketProvider
 
 
 _DAILY_CACHE: dict[str, Any] = {}
+_DAILY_LOCK = asyncio.Lock()
 
 
 class DailyBriefService:
@@ -20,47 +21,48 @@ class DailyBriefService:
         self.analysis = AnalysisService(settings)
 
     async def get_brief(self, force: bool = False) -> DailyBriefResponse:
-        today = date.today().isoformat()
-        cached_at = _DAILY_CACHE.get("cached_at")
-        cached_payload = _DAILY_CACHE.get("payload")
-        if (
-            not force
-            and isinstance(cached_at, datetime)
-            and isinstance(cached_payload, DailyBriefResponse)
-            and cached_payload.as_of.isoformat() == today
-            and (datetime.now(UTC) - cached_at).total_seconds() < self.settings.daily_brief_cache_ttl_seconds
-        ):
-            return cached_payload
+        async with _DAILY_LOCK:
+            today = date.today().isoformat()
+            cached_at = _DAILY_CACHE.get("cached_at")
+            cached_payload = _DAILY_CACHE.get("payload")
+            if (
+                not force
+                and isinstance(cached_at, datetime)
+                and isinstance(cached_payload, DailyBriefResponse)
+                and cached_payload.as_of.isoformat() == today
+                and (datetime.now(UTC) - cached_at).total_seconds() < self.settings.daily_brief_cache_ttl_seconds
+            ):
+                return cached_payload
 
-        universe = _daily_universe(self.settings.daily_brief_watchlist)
-        selected = await self._select_tickers(universe)
-        if not selected:
-            selected = [
-                DailyBriefTicker(ticker=ticker, score=0.0, reason="Fallback core desk name.")
-                for ticker in universe[: max(1, self.settings.daily_brief_ticker_count)]
-            ]
+            universe = _daily_universe(self.settings.daily_brief_watchlist)
+            selected = await self._select_tickers(universe)
+            if not selected:
+                selected = [
+                    DailyBriefTicker(ticker=ticker, score=0.0, reason="Fallback core desk name.")
+                    for ticker in universe[: max(1, self.settings.daily_brief_ticker_count)]
+                ]
 
-        payload = AnalysisRequest(
-            positions=[
-                PositionIn(ticker=row.ticker, qty=1, asset_type="etf" if row.ticker in {"SPY", "QQQ", "IWM", "SMH", "SOXX"} else "stock")
-                for row in selected[: self.settings.daily_brief_ticker_count]
-            ]
-        )
-        analysis = await self.analysis.analyze(payload, quick_mode=False)
-        headline, thesis, agenda = _brief_narrative(analysis.meta, selected)
-        brief = DailyBriefResponse(
-            as_of=analysis.as_of,
-            generated_at=datetime.now(UTC).isoformat(),
-            universe=universe,
-            selected=selected[: self.settings.daily_brief_ticker_count],
-            headline=headline,
-            thesis=thesis,
-            agenda=agenda,
-            analysis=analysis,
-        )
-        _DAILY_CACHE["cached_at"] = datetime.now(UTC)
-        _DAILY_CACHE["payload"] = brief
-        return brief
+            payload = AnalysisRequest(
+                positions=[
+                    PositionIn(ticker=row.ticker, qty=1, asset_type="etf" if row.ticker in {"SPY", "QQQ", "IWM", "SMH", "SOXX"} else "stock")
+                    for row in selected[: self.settings.daily_brief_ticker_count]
+                ]
+            )
+            analysis = await self.analysis.analyze(payload, quick_mode=False)
+            headline, thesis, agenda = _brief_narrative(analysis.meta, selected)
+            brief = DailyBriefResponse(
+                as_of=analysis.as_of,
+                generated_at=datetime.now(UTC).isoformat(),
+                universe=universe,
+                selected=selected[: self.settings.daily_brief_ticker_count],
+                headline=headline,
+                thesis=thesis,
+                agenda=agenda,
+                analysis=analysis,
+            )
+            _DAILY_CACHE["cached_at"] = datetime.now(UTC)
+            _DAILY_CACHE["payload"] = brief
+            return brief
 
     async def _select_tickers(self, universe: list[str]) -> list[DailyBriefTicker]:
         quotes = await self.market.get_quotes(universe)

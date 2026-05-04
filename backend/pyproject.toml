@@ -1,0 +1,18 @@
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+
+[tool.ruff.lint]
+# Conservative starter set. Expand to I/B/UP after a one-time cleanup pass.
+select = [
+    "E",   # pycodestyle errors
+    "F",   # pyflakes (catches real bugs: unused imports, undefined names)
+    "W",   # pycodestyle warnings
+]
+ignore = [
+    "E501",  # line too long (line-length is advisory in mixed code)
+    "E741",  # ambiguous variable names (l/I/O) — common in numeric code
+]
+
+[tool.ruff.format]
+quote-style = "double"
