@@ -2045,9 +2045,55 @@ a {
 .intel-detail-grid {
   display: grid;
   gap: 12px;
-  grid-template-columns: minmax(260px, 0.82fr) minmax(320px, 1fr) minmax(380px, 1.18fr);
+  grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
   padding: 16px 18px 22px;
   align-items: stretch;
+}
+
+.intel-read-cell {
+  min-width: 240px;
+  max-width: 360px;
+  white-space: normal;
+  line-height: 1.25;
+  font-weight: 700;
+}
+
+.evidence-score {
+  display: block;
+  margin-top: 4px;
+  color: var(--muted);
+  font-family: var(--font-mono), monospace;
+  font-size: 0.74rem;
+  font-weight: 800;
+}
+
+.value-lens-tag {
+  display: inline-flex;
+  align-items: center;
+  max-width: 260px;
+  border-radius: 999px;
+  padding: 6px 10px;
+  background: rgba(216, 225, 236, 0.1);
+  color: var(--ink);
+  white-space: normal;
+  line-height: 1.2;
+  font-weight: 800;
+}
+
+.value-lens-tag.valuation-backed {
+  background: rgba(63, 255, 139, 0.12);
+  color: var(--accent);
+}
+
+.value-lens-tag.partial {
+  background: rgba(234, 179, 8, 0.14);
+  color: #f6c445;
+}
+
+.value-lens-tag.market-only,
+.value-lens-tag.risk-only {
+  background: rgba(216, 225, 236, 0.1);
+  color: var(--muted);
 }
 
 .intel-info-card {
@@ -3038,6 +3084,32 @@ body.surface-light .severity,
 body.surface-light .tooltip-trigger {
   background: #ffffff;
   color: var(--ink);
+}
+
+body.surface-light .evidence-score {
+  color: #6c7a71;
+}
+
+body.surface-light .value-lens-tag {
+  background: #ffffff;
+  color: var(--ink);
+  box-shadow: inset 0 0 0 1px rgba(187, 202, 191, 0.38);
+}
+
+body.surface-light .value-lens-tag.valuation-backed {
+  background: #ecfdf5;
+  color: #006c49;
+}
+
+body.surface-light .value-lens-tag.partial {
+  background: #fff7ed;
+  color: #9a3412;
+}
+
+body.surface-light .value-lens-tag.market-only,
+body.surface-light .value-lens-tag.risk-only {
+  background: #f8fafc;
+  color: #6c7a71;
 }
 
 body.surface-light .tooltip-popover {

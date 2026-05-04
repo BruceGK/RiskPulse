@@ -531,16 +531,6 @@ export default function AnalysisPage() {
   const holdingsColSpan =
     effectiveHoldingsView === "full" ? 15 : effectiveHoldingsView === "quant" ? 9 : 8;
 
-  const convictionLabel = (row: Record<string, unknown>) => {
-    const confidence = asNumber(row.confidence) || 0;
-    const opportunity = asNumber(row.opportunityIndex) || 0;
-    const distribution = asNumber(row.distributionIndex) || 0;
-    const edge = Math.abs(opportunity - distribution);
-    const score = Math.min(1, confidence * (0.6 + edge));
-    if (score >= 0.66) return { label: "high", cls: "high" as const };
-    if (score >= 0.45) return { label: "medium", cls: "medium" as const };
-    return { label: "low", cls: "low" as const };
-  };
   const displaySeverity = (raw: string) => {
     const normalized = raw === "high" || raw === "low" ? raw : "medium";
     if (!lossMode) return { label: normalized, cls: normalized };
@@ -1660,20 +1650,20 @@ export default function AnalysisPage() {
                               <th>Action</th>
                               {effectiveHoldingsView === "essentials" && (
                                 <>
-                                  <th>Conviction</th>
+                                  <th>Read</th>
                                   <th>
                                     <HoldingsHeaderInfo
-                                      label="Value View"
-                                      tip="The model's valuation verdict. 'Unknown' means there was not enough evidence, or the asset is an ETF/fund that we do not intrinsically value yet."
+                                      label="Evidence"
+                                      tip="Evidence quality blends price history, technical indicator availability, ticker headlines, valuation inputs, and fair-value confirmation. Low evidence does not mean bad asset; it means the model should be more careful."
+                                    />
+                                  </th>
+                                  <th>
+                                    <HoldingsHeaderInfo
+                                      label="Value Lens"
+                                      tip="A more honest valuation label. It tells you whether this row is valuation-backed, ETF risk-only, partial fundamental coverage, or price-action only."
                                     />
                                   </th>
                                   <th>Tech State</th>
-                                  <th>
-                                    <HoldingsHeaderInfo
-                                      label="MoS"
-                                      tip="Margin of Safety: (fair value / current price) - 1. Positive means the stock screens below modeled fair value; negative means above. Hidden when fair value confidence is insufficient."
-                                    />
-                                  </th>
                                   <th>Opportunity</th>
                                   <th>Details</th>
                                 </>
@@ -1749,12 +1739,13 @@ export default function AnalysisPage() {
                               const themes = asStringArray(row.themes).slice(0, 2).join(", ") || "-";
                               const valuationMethods = asRecordArray(valuation?.methods);
                               const valuationExplain = valuationExplainSummary(valuation, openbb);
-                              const conviction = convictionLabel(row);
-                              const convictionView = displaySeverity(conviction.cls);
                               const layerScores = asRecord(row.layerScores);
                               const confluence = asRecord(row.confluenceScore);
                               const macroGate = asRecord(row.macroGate);
                               const analystRead = asRecord(row.analystRead);
+                              const decisionRead = asRecord(row.decisionRead);
+                              const reliability = asRecord(row.reliability);
+                              const valueLens = asRecord(row.valueLens);
                               const layerExplanation =
                                 typeof layerScores?.explanation === "string" ? layerScores.explanation : "";
                               const confluenceFinal = asNumber(confluence?.final);
@@ -1767,6 +1758,22 @@ export default function AnalysisPage() {
                               const confirmsIf = typeof analystRead?.confirmsIf === "string" ? analystRead.confirmsIf : "";
                               const invalidatesIf = typeof analystRead?.invalidatesIf === "string" ? analystRead.invalidatesIf : "";
                               const whyNow = typeof analystRead?.whyNow === "string" ? analystRead.whyNow : "";
+                              const decisionHeadline =
+                                typeof decisionRead?.headline === "string" ? decisionRead.headline.replace(`${ticker}: `, "") : "";
+                              const nextCheck = typeof decisionRead?.nextCheck === "string" ? decisionRead.nextCheck : "";
+                              const riskFlag = typeof decisionRead?.riskFlag === "string" ? decisionRead.riskFlag : "balanced";
+                              const reliabilityGrade = reliability?.grade === "high" || reliability?.grade === "low" ? reliability.grade : "medium";
+                              const reliabilityScore = asNumber(reliability?.score);
+                              const reliabilityReason = typeof reliability?.reason === "string" ? reliability.reason : "";
+                              const reliabilityMissing = Array.isArray(reliability?.missing)
+                                ? reliability.missing.filter((item): item is string => typeof item === "string").slice(0, 4)
+                                : [];
+                              const reliabilitySources = Array.isArray(reliability?.sources)
+                                ? reliability.sources.filter((item): item is string => typeof item === "string").slice(0, 5)
+                                : [];
+                              const valueLensLabel = typeof valueLens?.label === "string" ? valueLens.label : valueView;
+                              const valueLensState = typeof valueLens?.state === "string" ? valueLens.state : "unknown";
+                              const valueLensReason = typeof valueLens?.reason === "string" ? valueLens.reason : valuationExplain;
                               const isExpanded = expandedTicker === ticker;
                               return [
                                   <tr key={`row-${ticker}-${idx}`} className="intel-row">
@@ -1774,12 +1781,17 @@ export default function AnalysisPage() {
                                     <td>{displayAction(action)}</td>
                                     {effectiveHoldingsView === "essentials" && (
                                       <>
+                                        <td className="intel-read-cell">{decisionHeadline || action}</td>
                                         <td>
-                                          <span className={`severity ${convictionView.cls}`}>{convictionView.label}</span>
+                                          <span className={`severity ${displaySeverity(reliabilityGrade).cls}`}>
+                                            {reliabilityGrade}
+                                          </span>
+                                          <span className="evidence-score">{pct(reliabilityScore)}</span>
                                         </td>
-                                        <td>{valueView}</td>
+                                        <td>
+                                          <span className={`value-lens-tag ${valueLensState}`}>{valueLensLabel}</span>
+                                        </td>
                                         <td>{techState}</td>
-                                        <td className={marginSafety !== null && marginSafety < 0 ? "neg" : "pos"}>{pct(marginSafety)}</td>
                                         <td>{pct(opportunity)}</td>
                                         <td>
                                           <button
@@ -1826,17 +1838,26 @@ export default function AnalysisPage() {
                                       <td colSpan={holdingsColSpan}>
                                         <div className="intel-detail-grid">
                                           <div className="intel-info-card">
-                                            <div className="kpi-label">Positioning Context</div>
+                                            <div className="kpi-label">Decision Read</div>
+                                            <div className="note intel-note-lead">{decisionHeadline || analystThesis || "No decision read was available."}</div>
+                                            <div className="note"><strong>Next check:</strong> {nextCheck || "Watch the next open/close confirmation."}</div>
+                                            <div className="note"><strong>Risk flag:</strong> {riskFlag}</div>
+                                          </div>
+                                          <div className="intel-info-card">
+                                            <div className="kpi-label">Evidence Quality</div>
                                             <div className="note intel-note-lead">
-                                              Confidence {pct(confidence)} · Alpha {pct(asNumber(row.alphaScore))}
+                                              Model confidence {pct(confidence)} · evidence {pct(reliabilityScore)} · grade {reliabilityGrade}
                                             </div>
+                                            {reliabilityReason && <div className="note">{reliabilityReason}</div>}
+                                            <div className="note">Sources {reliabilitySources.length ? reliabilitySources.join(" · ") : "none confirmed"}</div>
+                                            {reliabilityMissing.length > 0 && <div className="note">Missing {reliabilityMissing.join(" · ")}</div>}
                                             <div className="note">{rationale || "No rationale text was available in this run."}</div>
                                           </div>
                                           <div className="intel-info-card">
                                             <div className="kpi-label">Valuation & Inputs</div>
                                             <div className="note">Fair value {money(fairValue)} · margin {pct(marginSafety)}</div>
                                             <div className="note">Input coverage {valInputs === null ? "-" : `${valInputs.toFixed(0)} factors`}</div>
-                                            <div className="note">Value view {valueView}</div>
+                                            <div className="note">Value lens {valueLensLabel}</div>
                                             {asset && (
                                               <div className="note">
                                                 Asset type {String(asset.quoteType || (asset.isEtf ? "ETF" : asset.isFund ? "Fund" : "Equity"))}
@@ -1845,6 +1866,7 @@ export default function AnalysisPage() {
                                           </div>
                                           <div className="intel-info-card">
                                             <div className="kpi-label">How Fair Value Is Built</div>
+                                            <div className="note">{valueLensReason}</div>
                                             <div className="note">{valuationExplain}</div>
                                             {valuationMethods.length > 0 && (
                                               <div className="note">

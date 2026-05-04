@@ -552,6 +552,33 @@ class AnalysisService:
                 headline_count=len(ticker_news),
             )
             confluence_score = _confluence_score(layer_scores, macro_gate)
+            reliability = _holding_reliability(
+                history_points=returns_count,
+                headline_count=len(ticker_news),
+                valuation_intel=valuation_intel,
+                openbb=openbb,
+                technical=technical,
+                provider=quote_sources.get(p.ticker),
+            )
+            value_lens = _value_lens(
+                openbb=openbb,
+                valuation_intel=valuation_intel,
+                openbb_scores=openbb_scores,
+                metrics=metrics,
+                current_price=p.price,
+            )
+            decision_read = _holding_decision_read(
+                ticker=p.ticker,
+                action_bias=action_bias,
+                confirmation_state=confirmation_state,
+                entry_discipline=entry_discipline,
+                value_lens=value_lens,
+                reliability=reliability,
+                technical=technical,
+                opportunity=opportunity_index,
+                distribution=distribution_index,
+                event_risk=news_stats["eventRisk"],
+            )
             rationale = _action_rationale(
                 action_bias=action_bias,
                 ret5=ret5,
@@ -584,6 +611,9 @@ class AnalysisService:
                 "layerScores": layer_scores,
                 "confluenceScore": confluence_score,
                 "analystRead": analyst_triggers,
+                "decisionRead": decision_read,
+                "reliability": reliability,
+                "valueLens": value_lens,
                 "technical": technical,
                 "openbb": openbb,
                 "valuation": valuation_intel,
@@ -2274,6 +2304,189 @@ def _openbb_scores(openbb: dict[str, Any], valuation_intel: dict[str, Any] | Non
         "quality": quality_score,
         "flow": flow_score,
         "coverage": coverage,
+    }
+
+
+def _holding_reliability(
+    *,
+    history_points: int,
+    headline_count: int,
+    valuation_intel: dict[str, Any],
+    openbb: dict[str, Any],
+    technical: dict[str, Any],
+    provider: str | None,
+) -> dict[str, Any]:
+    coverage = openbb.get("coverage", {}) if isinstance(openbb.get("coverage"), dict) else {}
+    asset = openbb.get("asset", {}) if isinstance(openbb.get("asset"), dict) else {}
+    valuation_inputs = int(_as_float(coverage.get("valuationInputs")) or 0)
+    valuation_confidence = _as_float(valuation_intel.get("confidence")) or 0.0
+    has_fair_value = isinstance(valuation_intel.get("fairValue"), (int, float))
+    is_etf = bool(asset.get("isEtf")) or bool(asset.get("isFund"))
+    has_technicals = bool(technical)
+
+    score = 0.0
+    score += min(0.32, max(0, history_points) / 180.0 * 0.32)
+    score += 0.18 if has_technicals else 0.0
+    score += min(0.18, headline_count / 8.0 * 0.18)
+    score += min(0.22, valuation_inputs / 6.0 * 0.22)
+    score += min(0.1, valuation_confidence * 0.1)
+    score = _clamp01(score)
+
+    missing: list[str] = []
+    if history_points < 45:
+        missing.append("price history")
+    if not has_technicals:
+        missing.append("technical indicators")
+    if headline_count <= 0:
+        missing.append("ticker headlines")
+    if not is_etf and valuation_inputs < 3:
+        missing.append("fundamental valuation inputs")
+    if not has_fair_value and not is_etf:
+        missing.append("fair value confirmation")
+
+    sources = []
+    if provider:
+        sources.append(provider)
+    primary = str(openbb.get("provider") or "").strip()
+    if primary and primary != "none" and primary not in sources:
+        sources.append(primary)
+    if has_technicals:
+        sources.append("technical")
+    if headline_count > 0:
+        sources.append("news")
+
+    grade = "high" if score >= 0.72 else "medium" if score >= 0.48 else "low"
+    reason = "Full-enough evidence for an actionable read."
+    if is_etf:
+        reason = "ETF/fund row: risk and technical evidence are valid, but intrinsic fair value is intentionally withheld."
+    elif valuation_inputs < 3:
+        reason = "Price/news/technical read only; fundamental valuation coverage is too thin for fair value."
+    elif not has_fair_value:
+        reason = "Valuation inputs exist, but independent methods did not clear the confidence gate."
+
+    return {
+        "score": round(score, 3),
+        "grade": grade,
+        "reason": reason,
+        "missing": missing[:5],
+        "sources": sources[:6],
+        "historyPoints": history_points,
+        "headlineCount": headline_count,
+        "valuationInputs": valuation_inputs,
+        "hasFairValue": has_fair_value,
+        "isEtf": is_etf,
+    }
+
+
+def _value_lens(
+    *,
+    openbb: dict[str, Any],
+    valuation_intel: dict[str, Any],
+    openbb_scores: dict[str, float],
+    metrics: dict[str, Any],
+    current_price: float,
+) -> dict[str, Any]:
+    asset = openbb.get("asset", {}) if isinstance(openbb.get("asset"), dict) else {}
+    is_etf = bool(asset.get("isEtf")) or bool(asset.get("isFund"))
+    fair_value = _as_float(valuation_intel.get("fairValue"))
+    margin = _as_float(valuation_intel.get("marginSafety"))
+    confidence = _as_float(valuation_intel.get("confidence")) or 0.0
+    verdict = str(valuation_intel.get("verdict") or "unknown")
+    range_location = _as_float(metrics.get("rangeLoc"))
+    ret20 = _as_float(metrics.get("ret20"))
+    valuation_score = _as_float(openbb_scores.get("valuation")) or 0.5
+    inputs = int(_as_float((openbb.get("coverage") if isinstance(openbb.get("coverage"), dict) else {}).get("valuationInputs")) or 0)
+
+    if is_etf:
+        label = "ETF risk lens"
+        state = "risk-only"
+        reason = "ETF/fund valuation requires NAV/holdings decomposition; this run uses trend, macro, and exposure instead."
+    elif fair_value is not None and margin is not None:
+        label = verdict
+        state = "valuation-backed"
+        reason = f"Fair value ${fair_value:,.2f} versus spot ${float(current_price):,.2f}; model confidence {confidence:.0%}."
+    elif inputs >= 2:
+        label = "partial value read"
+        state = "partial"
+        reason = "Some fundamentals were found, but not enough independent valuation methods cleared the fair-value gate."
+    else:
+        label = "price-action only"
+        state = "market-only"
+        reason = "No reliable fundamental valuation package was available; avoid treating this as an intrinsic-value call."
+
+    if fair_value is None:
+        if range_location is not None and range_location <= 0.28:
+            label = f"{label} / low range"
+        elif range_location is not None and range_location >= 0.72:
+            label = f"{label} / high range"
+        elif ret20 is not None and ret20 >= 0.08:
+            label = f"{label} / momentum"
+
+    return {
+        "label": label,
+        "state": state,
+        "reason": reason,
+        "confidence": round(confidence if fair_value is not None else max(0.15, min(0.58, valuation_score * 0.55)), 3),
+        "inputCount": inputs,
+        "rangeLocation": round(range_location, 4) if range_location is not None else None,
+        "twentyDayReturn": round(ret20, 4) if ret20 is not None else None,
+    }
+
+
+def _holding_decision_read(
+    *,
+    ticker: str,
+    action_bias: str,
+    confirmation_state: str,
+    entry_discipline: str,
+    value_lens: dict[str, Any],
+    reliability: dict[str, Any],
+    technical: dict[str, Any],
+    opportunity: float,
+    distribution: float,
+    event_risk: float,
+) -> dict[str, Any]:
+    tech_state = str(technical.get("signalState") or "unknown")
+    value_state = str(value_lens.get("state") or "unknown")
+    reliability_grade = str(reliability.get("grade") or "low")
+    missing = reliability.get("missing") if isinstance(reliability.get("missing"), list) else []
+
+    if entry_discipline == "no-catch":
+        headline = f"{ticker}: no-catch until selling pressure stabilizes."
+    elif entry_discipline == "cheap-but-not-ready":
+        headline = f"{ticker}: valuation may be interesting, but price action has not confirmed."
+    elif action_bias == "trim-into-strength":
+        headline = f"{ticker}: strength looks more like distribution liquidity than a fresh entry."
+    elif action_bias == "accumulate-on-weakness":
+        headline = f"{ticker}: accumulation candidate, but size should wait for confirmation."
+    elif action_bias == "de-risk-hedge":
+        headline = f"{ticker}: event/macro risk is dominating the holding."
+    else:
+        headline = f"{ticker}: watch-hold; next confirmation matters more than the current score."
+
+    next_check = "Watch the next open/close relative to support and prior-day range."
+    if value_state in {"market-only", "partial"}:
+        next_check = "Need better fundamental coverage before showing fair value."
+    if tech_state in {"overbought-uptrend", "bull-trend"} and distribution > opportunity + 0.08:
+        next_check = "Watch whether momentum stalls; crowding is rising faster than opportunity."
+    elif event_risk >= 0.55:
+        next_check = "Watch headline/event risk cool before adding exposure."
+
+    risk_flag = "balanced"
+    if reliability_grade == "low":
+        risk_flag = "low-evidence"
+    elif confirmation_state in {"watching-exhaustion", "reclaiming-resistance"} and distribution >= 0.48:
+        risk_flag = "crowding-watch"
+    elif confirmation_state in {"watching-support", "failed-breakdown-watch"}:
+        risk_flag = "support-watch"
+
+    return {
+        "headline": headline,
+        "riskFlag": risk_flag,
+        "nextCheck": next_check,
+        "confirmation": confirmation_state,
+        "entry": entry_discipline,
+        "missing": missing[:4],
     }
 
 
