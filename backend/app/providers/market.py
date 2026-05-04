@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import math
 from datetime import UTC, date, datetime, timedelta
 from typing import Any
@@ -14,6 +15,7 @@ _QUOTE_CACHE = TTLCache[Quote](max_size=8000)
 _HISTORY_CACHE = TTLCache[list[float]](max_size=6000)
 _MISS_CACHE = TTLCache[bool](max_size=12000)
 _TECH_CACHE = TTLCache[dict[str, Any]](max_size=5000)
+_logger = logging.getLogger("riskpulse.providers.market")
 
 
 class MarketProvider:
@@ -57,18 +59,20 @@ class MarketProvider:
             return []
 
         fetchers = (
-            self._fetch_polygon_history,
-            self._fetch_fmp_history,
-            self._fetch_openbb_history,
-            self._fetch_yahoo_history,
-            self._fetch_alpha_vantage_history,
+            ("polygon", self._fetch_polygon_history),
+            ("fmp", self._fetch_fmp_history),
+            ("openbb", self._fetch_openbb_history),
+            ("yahoo", self._fetch_yahoo_history),
+            ("alpha_vantage", self._fetch_alpha_vantage_history),
         )
-        for fetcher in fetchers:
+        for source, fetcher in fetchers:
             history = await fetcher(ticker, days)
             if len(history) >= 2:
+                _logger.info("market.history source=%s ticker=%s points=%d", source, ticker, len(history))
                 _HISTORY_CACHE.set(key, history, ttl_seconds=self.settings.history_cache_ttl_seconds)
                 return history
 
+        _logger.warning("market.history_miss ticker=%s", ticker)
         _MISS_CACHE.set(key, True, ttl_seconds=self.settings.history_miss_cache_ttl_seconds)
         return []
 
@@ -114,6 +118,14 @@ class MarketProvider:
         if not pending:
             return pending
         fetched = await fetcher(pending)
+        if fetched:
+            sources = {quote.source for quote in fetched.values()}
+            _logger.info(
+                "market.quotes source=%s served=%d pending_before=%d",
+                ",".join(sorted(sources)) or "unknown",
+                len(fetched),
+                len(pending),
+            )
         for symbol, quote in fetched.items():
             out[symbol] = quote
             _QUOTE_CACHE.set(f"quote:{symbol}", quote, ttl_seconds=self.settings.quote_cache_ttl_seconds)

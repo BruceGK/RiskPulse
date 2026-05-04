@@ -1,0 +1,50 @@
+name: CI
+
+on:
+  pull_request:
+    branches: ["main"]
+  push:
+    branches: ["main"]
+
+jobs:
+  backend-lint:
+    name: Backend lint and type check
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install dev dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install ruff==0.6.9 mypy==1.11.2
+      - name: Ruff lint
+        run: ruff check app
+      - name: mypy (non-blocking)
+        run: mypy app --ignore-missing-imports --no-strict-optional || true
+
+  frontend-lint:
+    name: Frontend lint and type check
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install
+        run: npm ci || npm install
+      - name: ESLint
+        run: npm run lint
+      - name: TypeScript check
+        run: npx tsc --noEmit

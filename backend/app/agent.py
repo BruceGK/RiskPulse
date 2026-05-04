@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from datetime import UTC, datetime
 from typing import Any
 
@@ -10,6 +11,7 @@ from app.models import AgentResponse, AgentSetup, DailyBriefResponse
 
 _AGENT_CACHE: dict[str, Any] = {}
 _AGENT_MEMORY: dict[str, dict[str, Any]] = {}
+_AGENT_LOCK = asyncio.Lock()
 
 
 class InvestmentAgentService:
@@ -18,22 +20,23 @@ class InvestmentAgentService:
         self.daily = DailyBriefService(settings)
 
     async def get_agent(self, force: bool = False) -> AgentResponse:
-        cached_at = _AGENT_CACHE.get("cached_at")
-        cached_payload = _AGENT_CACHE.get("payload")
-        if (
-            not force
-            and isinstance(cached_at, datetime)
-            and isinstance(cached_payload, AgentResponse)
-            and (datetime.now(UTC) - cached_at).total_seconds() < self.settings.agent_cache_ttl_seconds
-        ):
-            return cached_payload
+        async with _AGENT_LOCK:
+            cached_at = _AGENT_CACHE.get("cached_at")
+            cached_payload = _AGENT_CACHE.get("payload")
+            if (
+                not force
+                and isinstance(cached_at, datetime)
+                and isinstance(cached_payload, AgentResponse)
+                and (datetime.now(UTC) - cached_at).total_seconds() < self.settings.agent_cache_ttl_seconds
+            ):
+                return cached_payload
 
-        brief = await self.daily.get_brief(force=force)
-        response = _build_agent_response(brief)
-        _AGENT_CACHE["cached_at"] = datetime.now(UTC)
-        _AGENT_CACHE["payload"] = response
-        _remember(response)
-        return response
+            brief = await self.daily.get_brief(force=force)
+            response = _build_agent_response(brief)
+            _AGENT_CACHE["cached_at"] = datetime.now(UTC)
+            _AGENT_CACHE["payload"] = response
+            _remember(response)
+            return response
 
 
 def _build_agent_response(brief: DailyBriefResponse) -> AgentResponse:

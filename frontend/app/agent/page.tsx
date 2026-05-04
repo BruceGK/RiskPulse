@@ -1,32 +1,22 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 
 import TerminalTopNav from "@/app/components/TerminalTopNav";
 import { getInvestmentAgent } from "@/lib/api";
+import { STORAGE_KEY, assetTypeFor } from "@/lib/constants";
+import { label, num, pct as pctBase } from "@/lib/format";
 import type { AgentResponse, AgentSetup, Position } from "@/lib/types";
 
-const STORAGE_KEY = "riskpulse_positions";
-
-function pct(value: number | null | undefined): string {
-  if (value === null || value === undefined) return "-";
-  return `${(value * 100).toFixed(1)}%`;
-}
-
-function num(value: unknown): number | null {
-  return typeof value === "number" && Number.isFinite(value) ? value : null;
-}
-
-function label(value: string): string {
-  return value.replace(/-/g, " ");
-}
+const pct = (value: number | null | undefined) => pctBase(value, 1);
 
 function setupPositions(agent: AgentResponse): Position[] {
   return agent.source_daily_brief.selected.map((row) => ({
     ticker: row.ticker,
     qty: 1,
-    asset_type: ["SPY", "QQQ", "IWM", "SMH", "SOXX"].includes(row.ticker) ? "etf" : "stock",
+    asset_type: assetTypeFor(row.ticker),
   }));
 }
 
@@ -92,6 +82,7 @@ function SetupCard({ setup }: { setup: AgentSetup }) {
 }
 
 export default function InvestmentAgentPage() {
+  const router = useRouter();
   const [agent, setAgent] = useState<AgentResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -127,7 +118,7 @@ export default function InvestmentAgentPage() {
   const applyBasket = () => {
     if (!agent) return;
     localStorage.setItem(STORAGE_KEY, JSON.stringify(setupPositions(agent)));
-    window.location.href = "/analysis";
+    router.push("/analysis");
   };
 
   return (

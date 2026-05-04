@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 import httpx
@@ -9,6 +10,7 @@ from app.providers.cache import TTLCache
 
 
 _INTEL_CACHE = TTLCache[dict[str, Any]](max_size=4000)
+_logger = logging.getLogger("riskpulse.providers.fundamentals")
 
 
 class OpenBBProvider:
@@ -28,40 +30,51 @@ class OpenBBProvider:
         if cached is not None:
             return cached
 
+        openbb_tasks: list[Any] = []
         if self.enabled:
-            profile_task = self._fetch(
-                "/api/v1/equity/profile",
-                {"symbol": symbol, "provider": self.settings.openbb_provider},
-            )
-            metrics_task = self._fetch(
-                "/api/v1/equity/fundamental/metrics",
-                {"symbol": symbol, "provider": self.settings.openbb_provider},
-            )
-            ratios_task = self._fetch(
-                "/api/v1/equity/fundamental/ratios",
-                {"symbol": symbol, "provider": self.settings.openbb_provider},
-            )
-            analyst_task = self._fetch(
-                "/api/v1/equity/estimates/consensus",
-                {"symbol": symbol, "provider": self.settings.openbb_provider},
-            )
-            options_task = self._fetch(
-                "/api/v1/derivatives/options/snapshots",
-                {"symbol": symbol, "provider": self.settings.openbb_provider},
-            )
-            shorts_task = self._fetch(
-                "/api/v1/equity/shorts/short_interest",
-                {"symbol": symbol, "provider": self.settings.openbb_provider},
-            )
-            profile, metrics, ratios, analyst, options, shorts = await _gather_safely(
-                profile_task, metrics_task, ratios_task, analyst_task, options_task, shorts_task
-            )
+            openbb_tasks = [
+                self._fetch(
+                    "/api/v1/equity/profile",
+                    {"symbol": symbol, "provider": self.settings.openbb_provider},
+                ),
+                self._fetch(
+                    "/api/v1/equity/fundamental/metrics",
+                    {"symbol": symbol, "provider": self.settings.openbb_provider},
+                ),
+                self._fetch(
+                    "/api/v1/equity/fundamental/ratios",
+                    {"symbol": symbol, "provider": self.settings.openbb_provider},
+                ),
+                self._fetch(
+                    "/api/v1/equity/estimates/consensus",
+                    {"symbol": symbol, "provider": self.settings.openbb_provider},
+                ),
+                self._fetch(
+                    "/api/v1/derivatives/options/snapshots",
+                    {"symbol": symbol, "provider": self.settings.openbb_provider},
+                ),
+                self._fetch(
+                    "/api/v1/equity/shorts/short_interest",
+                    {"symbol": symbol, "provider": self.settings.openbb_provider},
+                ),
+            ]
+
+        fallback_tasks = [
+            self._fetch_alpha_vantage_overview(symbol) if self.settings.alpha_vantage_api_key else _none_coro(),
+            self._fetch_yahoo_overview(symbol),
+            self._fetch_yahoo_quote(symbol),
+            self._fetch_fmp_key_metrics(symbol) if self.settings.fmp_api_key else _none_coro(),
+            self._fetch_fmp_profile(symbol) if self.settings.fmp_api_key else _none_coro(),
+            self._fetch_fmp_quote(symbol) if self.settings.fmp_api_key else _none_coro(),
+        ]
+
+        gathered = await _gather_safely(*openbb_tasks, *fallback_tasks)
+        if self.enabled:
+            profile, metrics, ratios, analyst, options, shorts = gathered[:6]
+            alpha_overview, yahoo_overview, yahoo_quote, fmp_metrics, fmp_profile, fmp_quote = gathered[6:]
         else:
             profile, metrics, ratios, analyst, options, shorts = None, None, None, None, None, None
-
-        alpha_overview = await self._fetch_alpha_vantage_overview(symbol) if self.settings.alpha_vantage_api_key else None
-        yahoo_overview = await self._fetch_yahoo_overview(symbol)
-        yahoo_quote = await self._fetch_yahoo_quote(symbol)
+            alpha_overview, yahoo_overview, yahoo_quote, fmp_metrics, fmp_profile, fmp_quote = gathered
 
         row_profile = _pick_row(profile)
         row_metrics = _pick_row(metrics)
@@ -72,6 +85,9 @@ class OpenBBProvider:
         row_alpha = alpha_overview if isinstance(alpha_overview, dict) else {}
         row_yahoo = yahoo_overview if isinstance(yahoo_overview, dict) else {}
         row_yahoo_quote = yahoo_quote if isinstance(yahoo_quote, dict) else {}
+        row_fmp_metrics = fmp_metrics if isinstance(fmp_metrics, dict) else {}
+        row_fmp_profile = fmp_profile if isinstance(fmp_profile, dict) else {}
+        row_fmp_quote = fmp_quote if isinstance(fmp_quote, dict) else {}
         quote_type = str(
             _first_value(row_profile, ("quote_type", "quoteType", "security_type", "instrument_type"))
             or row_yahoo.get("quoteType")
@@ -82,12 +98,14 @@ class OpenBBProvider:
             _first_value(row_profile, ("is_etf", "isEtf")),
             row_yahoo.get("isEtf"),
             row_yahoo_quote.get("isEtf"),
+            row_fmp_profile.get("isEtf"),
             quote_type == "ETF",
         )
         is_fund = _coalesce_bool(
             _first_value(row_profile, ("is_fund", "isFund")),
             row_yahoo.get("isFund"),
             row_yahoo_quote.get("isFund"),
+            row_fmp_profile.get("isFund"),
             quote_type in {"MUTUALFUND", "MUTUAL FUND", "FUND"},
         )
         company_name = str(
@@ -95,30 +113,46 @@ class OpenBBProvider:
             or row_alpha.get("Name")
             or row_yahoo_quote.get("longName")
             or row_yahoo_quote.get("shortName")
+            or row_fmp_profile.get("companyName")
+            or row_fmp_quote.get("name")
             or ""
         ).strip() or None
 
         pe = _coalesce_float(
             _first_value(row_metrics, ("pe_ratio", "pe", "price_earnings_ratio")),
+            row_fmp_metrics.get("peRatioTTM"),
+            row_fmp_quote.get("pe"),
             row_alpha.get("PERatio"),
             row_yahoo.get("PERatio"),
             row_yahoo_quote.get("PERatio"),
         )
         pb = _coalesce_float(
             _first_value(row_metrics, ("pb_ratio", "price_to_book", "p_b")),
+            row_fmp_metrics.get("pbRatioTTM"),
+            row_fmp_metrics.get("priceToBookRatioTTM"),
             row_alpha.get("PriceToBookRatio"),
             row_yahoo.get("PriceToBookRatio"),
             row_yahoo_quote.get("PriceToBookRatio"),
         )
         ev_ebitda = _coalesce_float(
             _first_value(row_ratios, ("ev_to_ebitda", "enterprise_value_ebitda")),
+            row_fmp_metrics.get("enterpriseValueOverEBITDATTM"),
             row_alpha.get("EVToEBITDA"),
             row_yahoo.get("EVToEBITDA"),
             row_yahoo_quote.get("EVToEBITDA"),
         )
-        fcf_yield = _coalesce_float(_first_value(row_ratios, ("fcf_yield", "free_cash_flow_yield")))
-        market_cap = _coalesce_float(row_alpha.get("MarketCapitalization"), row_yahoo.get("MarketCapitalization"))
-        market_cap = _coalesce_float(market_cap, row_yahoo_quote.get("MarketCapitalization"))
+        fcf_yield = _coalesce_float(
+            _first_value(row_ratios, ("fcf_yield", "free_cash_flow_yield")),
+            row_fmp_metrics.get("freeCashFlowYieldTTM"),
+        )
+        market_cap = _coalesce_float(
+            row_alpha.get("MarketCapitalization"),
+            row_yahoo.get("MarketCapitalization"),
+            row_yahoo_quote.get("MarketCapitalization"),
+            row_fmp_profile.get("mktCap"),
+            row_fmp_quote.get("marketCap"),
+            row_fmp_metrics.get("marketCapTTM"),
+        )
         free_cash_flow_ttm = _coalesce_float(
             row_alpha.get("FreeCashFlowTTM"),
             row_alpha.get("OperatingCashflowTTM"),
@@ -129,17 +163,24 @@ class OpenBBProvider:
             fcf_yield = free_cash_flow_ttm / market_cap
         roe = _coalesce_float(
             _first_value(row_ratios, ("roe", "return_on_equity")),
+            row_fmp_metrics.get("roeTTM"),
+            row_fmp_metrics.get("returnOnEquityTTM"),
             row_alpha.get("ReturnOnEquityTTM"),
             row_yahoo.get("ReturnOnEquityTTM"),
             row_yahoo_quote.get("ReturnOnEquityTTM"),
         )
-        gross_margin = _coalesce_float(_first_value(row_ratios, ("gross_margin", "gross_margin_ratio")))
+        gross_margin = _coalesce_float(
+            _first_value(row_ratios, ("gross_margin", "gross_margin_ratio")),
+            row_fmp_metrics.get("grossProfitMarginTTM"),
+        )
         gross_profit_ttm = _coalesce_float(row_alpha.get("GrossProfitTTM"), row_yahoo.get("GrossProfitTTM"))
         revenue_ttm = _coalesce_float(row_alpha.get("RevenueTTM"), row_yahoo.get("RevenueTTM"))
         if gross_margin is None and isinstance(gross_profit_ttm, float) and isinstance(revenue_ttm, float) and revenue_ttm > 0:
             gross_margin = gross_profit_ttm / revenue_ttm
         debt_to_equity = _coalesce_float(
             _first_value(row_ratios, ("debt_to_equity", "de_ratio")),
+            row_fmp_metrics.get("debtToEquityTTM"),
+            row_fmp_metrics.get("debtEquityRatioTTM"),
             row_alpha.get("DebtToEquity"),
             row_yahoo.get("DebtToEquity"),
             row_yahoo_quote.get("DebtToEquity"),
@@ -162,12 +203,15 @@ class OpenBBProvider:
         )
         eps_ttm = _coalesce_float(
             _first_value(row_metrics, ("eps", "eps_ttm", "earnings_per_share")),
+            row_fmp_quote.get("eps"),
+            row_fmp_metrics.get("netIncomePerShareTTM"),
             row_alpha.get("DilutedEPSTTM"),
             row_yahoo.get("DilutedEPSTTM"),
             row_yahoo_quote.get("DilutedEPSTTM"),
         )
         book_value_per_share = _coalesce_float(
             _first_value(row_metrics, ("book_value_per_share", "bvps")),
+            row_fmp_metrics.get("bookValuePerShareTTM"),
             row_alpha.get("BookValue"),
             row_yahoo.get("BookValue"),
             row_yahoo_quote.get("BookValue"),
@@ -191,10 +235,39 @@ class OpenBBProvider:
 
         valuation_inputs = [pe, pb, ev_ebitda, fcf_yield, target_price, roe, eps_ttm, book_value_per_share, revenue_growth, earnings_growth]
         coverage_count = sum(1 for item in valuation_inputs if isinstance(item, float))
+        primary_provider = (
+            "openbb" if (row_metrics or row_ratios)
+            else "fmp" if (row_fmp_metrics or row_fmp_profile or row_fmp_quote)
+            else "alpha_vantage" if row_alpha
+            else "yahoo" if (row_yahoo or row_yahoo_quote)
+            else "none"
+        )
+        _logger.info(
+            "fundamentals.coverage symbol=%s primary=%s inputs=%d openbb=%s fmp=%s av=%s yahoo=%s",
+            symbol,
+            primary_provider,
+            coverage_count,
+            bool(row_metrics or row_ratios),
+            bool(row_fmp_metrics or row_fmp_quote or row_fmp_profile),
+            bool(row_alpha),
+            bool(row_yahoo or row_yahoo_quote),
+        )
         result = {
-            "provider": "openbb",
-            "sector": _first_value(row_profile, ("sector", "gics_sector")) or row_yahoo.get("sector") or None,
-            "industry": _first_value(row_profile, ("industry", "gics_industry")) or row_yahoo.get("industry") or None,
+            "provider": primary_provider,
+            "sector": (
+                _first_value(row_profile, ("sector", "gics_sector"))
+                or row_yahoo.get("sector")
+                or row_fmp_profile.get("sector")
+                or row_alpha.get("Sector")
+                or None
+            ),
+            "industry": (
+                _first_value(row_profile, ("industry", "gics_industry"))
+                or row_yahoo.get("industry")
+                or row_fmp_profile.get("industry")
+                or row_alpha.get("Industry")
+                or None
+            ),
             "asset": {
                 "quoteType": quote_type or None,
                 "isEtf": bool(is_etf),
@@ -234,6 +307,9 @@ class OpenBBProvider:
                 "alphaVantageOverview": bool(row_alpha),
                 "yahooOverview": bool(row_yahoo),
                 "yahooQuote": bool(row_yahoo_quote),
+                "fmpKeyMetrics": bool(row_fmp_metrics),
+                "fmpProfile": bool(row_fmp_profile),
+                "fmpQuote": bool(row_fmp_quote),
             },
             "coverage": {"valuationInputs": coverage_count},
         }
@@ -420,6 +496,54 @@ class OpenBBProvider:
         except Exception:
             return None
 
+    async def _fetch_fmp_key_metrics(self, symbol: str) -> dict[str, Any] | None:
+        if not self.settings.fmp_api_key:
+            return None
+        url = f"https://financialmodelingprep.com/api/v3/key-metrics-ttm/{symbol}"
+        params = {"apikey": self.settings.fmp_api_key}
+        try:
+            async with httpx.AsyncClient(timeout=self.settings.request_timeout_seconds) as client:
+                resp = await client.get(url, params=params)
+                resp.raise_for_status()
+                payload = resp.json()
+            if isinstance(payload, list) and payload and isinstance(payload[0], dict):
+                return payload[0]
+        except Exception:
+            _logger.warning("fmp.key_metrics_failed symbol=%s", symbol)
+        return None
+
+    async def _fetch_fmp_profile(self, symbol: str) -> dict[str, Any] | None:
+        if not self.settings.fmp_api_key:
+            return None
+        url = f"https://financialmodelingprep.com/api/v3/profile/{symbol}"
+        params = {"apikey": self.settings.fmp_api_key}
+        try:
+            async with httpx.AsyncClient(timeout=self.settings.request_timeout_seconds) as client:
+                resp = await client.get(url, params=params)
+                resp.raise_for_status()
+                payload = resp.json()
+            if isinstance(payload, list) and payload and isinstance(payload[0], dict):
+                return payload[0]
+        except Exception:
+            _logger.warning("fmp.profile_failed symbol=%s", symbol)
+        return None
+
+    async def _fetch_fmp_quote(self, symbol: str) -> dict[str, Any] | None:
+        if not self.settings.fmp_api_key:
+            return None
+        url = f"https://financialmodelingprep.com/api/v3/quote/{symbol}"
+        params = {"apikey": self.settings.fmp_api_key}
+        try:
+            async with httpx.AsyncClient(timeout=self.settings.request_timeout_seconds) as client:
+                resp = await client.get(url, params=params)
+                resp.raise_for_status()
+                payload = resp.json()
+            if isinstance(payload, list) and payload and isinstance(payload[0], dict):
+                return payload[0]
+        except Exception:
+            _logger.warning("fmp.quote_failed symbol=%s", symbol)
+        return None
+
     async def _fetch_yahoo_quote(self, symbol: str) -> dict[str, Any] | None:
         url = "https://query1.finance.yahoo.com/v7/finance/quote"
         params = {"symbols": symbol}
@@ -474,6 +598,10 @@ async def _gather_safely(*coros):
     for row in results:
         out.append(None if isinstance(row, Exception) else row)
     return out
+
+
+async def _none_coro() -> None:
+    return None
 
 
 def _rows(payload: Any) -> list[dict[str, Any]]:

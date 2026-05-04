@@ -1,33 +1,25 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 
 import TerminalTopNav from "@/app/components/TerminalTopNav";
 import { getDailyBrief } from "@/lib/api";
+import { STORAGE_KEY, assetTypeFor } from "@/lib/constants";
+import { money, pct } from "@/lib/format";
 import type { DailyBriefResponse, Position } from "@/lib/types";
-
-const STORAGE_KEY = "riskpulse_positions";
-
-function pct(value: number | null | undefined): string {
-  if (value === null || value === undefined) return "-";
-  return `${(value * 100).toFixed(2)}%`;
-}
-
-function money(value: number | null | undefined): string {
-  if (value === null || value === undefined) return "-";
-  return `$${value.toLocaleString(undefined, { maximumFractionDigits: 2 })}`;
-}
 
 function deskPositions(brief: DailyBriefResponse): Position[] {
   return brief.selected.map((row) => ({
     ticker: row.ticker,
     qty: 1,
-    asset_type: ["SPY", "QQQ", "IWM", "SMH", "SOXX"].includes(row.ticker) ? "etf" : "stock",
+    asset_type: assetTypeFor(row.ticker),
   }));
 }
 
 export default function DailyDeskPage() {
+  const router = useRouter();
   const [brief, setBrief] = useState<DailyBriefResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -63,7 +55,7 @@ export default function DailyDeskPage() {
   const applyToPortfolio = () => {
     if (!brief) return;
     localStorage.setItem(STORAGE_KEY, JSON.stringify(deskPositions(brief)));
-    window.location.href = "/analysis";
+    router.push("/analysis");
   };
 
   return (
