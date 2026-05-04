@@ -78,8 +78,9 @@ docker compose up --build
 This repository includes GitHub Actions workflows for frontend and backend deployment. Credentials and provider keys must be configured as repository/environment secrets in your own Azure subscription and are intentionally not documented here with account-specific steps.
 
 Optional daily automation:
-- Set repository variable `RISKPULSE_API_URL` to the backend base URL, for example the Azure Container Apps URL.
-- The `Warm Daily Analyst Desk` workflow calls `/api/daily-brief?force=true` on weekdays after the US market opens to refresh the automated watchlist briefing.
+- Set repository variable `RISKPULSE_API_URL` to the public Static Web App URL, for example `https://red-hill-09659e10f.6.azurestaticapps.net`.
+- Do not use the direct Azure Container Apps URL here if the container app is protected; the workflow warms the API through the Static Web Apps `/api/*` backend proxy.
+- The `Daily Analyst Desk` workflow calls `/api/daily-brief?force=true` on weekdays after the US market opens to refresh the automated watchlist briefing.
 
 ## Engineering Notes
 - Prefer licensed APIs for production-quality data.

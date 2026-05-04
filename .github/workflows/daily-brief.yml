@@ -19,7 +19,21 @@ jobs:
           RISKPULSE_API_URL: ${{ vars.RISKPULSE_API_URL }}
         run: |
           if [ -z "$RISKPULSE_API_URL" ]; then
-            echo "Set repository variable RISKPULSE_API_URL to your backend base URL to enable scheduled daily brief warming."
+            echo "Set repository variable RISKPULSE_API_URL to your public Static Web App URL to enable scheduled daily brief warming."
             exit 0
           fi
-          curl -fsS "$RISKPULSE_API_URL/api/daily-brief?force=true"
+          BASE_URL="${RISKPULSE_API_URL%/}"
+          URL="$BASE_URL/api/daily-brief?force=true"
+          STATUS=$(curl -sS -o /tmp/riskpulse-daily-brief.json -w "%{http_code}" "$URL" || true)
+          if [ "$STATUS" = "401" ]; then
+            echo "Daily brief warm-up received 401."
+            echo "RISKPULSE_API_URL should be the public Static Web App URL, not the protected Container App URL."
+            echo "Example: https://red-hill-09659e10f.6.azurestaticapps.net"
+            exit 1
+          fi
+          if [ "$STATUS" -lt 200 ] || [ "$STATUS" -ge 300 ]; then
+            echo "Daily brief warm-up failed with HTTP $STATUS"
+            cat /tmp/riskpulse-daily-brief.json || true
+            exit 1
+          fi
+          echo "Daily brief cache warmed through $BASE_URL"
