@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import asyncio
+import logging
 import xml.etree.ElementTree as ET
+from typing import Awaitable, Sequence
 from urllib.parse import quote_plus
 
 import httpx
@@ -11,6 +14,25 @@ from app.providers.openbb import OpenBBProvider
 from app.providers.types import NewsItem
 
 _NEWS_CACHE = TTLCache[list[NewsItem]](max_size=3000)
+_logger = logging.getLogger("riskpulse.providers.news")
+
+
+async def _race_first_nonempty(coros: Sequence[Awaitable[list[NewsItem]]]) -> list[NewsItem]:
+    """Race coroutines, return first non-empty result, cancel laggards."""
+    tasks = [asyncio.create_task(coro) for coro in coros]
+    try:
+        for task in asyncio.as_completed(tasks):
+            try:
+                result = await task
+            except Exception:
+                continue
+            if result:
+                return result
+    finally:
+        for task in tasks:
+            if not task.done():
+                task.cancel()
+    return []
 
 
 class NewsProvider:
@@ -24,16 +46,24 @@ class NewsProvider:
         if cached is not None:
             return cached
 
-        items = await self._polygon_ticker_news(ticker, limit)
-        if not items:
-            items = await self._openbb_ticker_news(ticker, limit)
+        # Tier 1: race high-quota providers in parallel (Polygon + OpenBB).
+        items = await _race_first_nonempty([
+            self._polygon_ticker_news(ticker, limit),
+            self._openbb_ticker_news(ticker, limit),
+        ])
+        source = "tier1" if items else None
+        # Tier 2+: fall back sequentially to quota-limited providers.
         if not items:
             items = await self._alpha_vantage_ticker_news(ticker, limit)
+            source = "alpha_vantage" if items else source
         if not items:
             items = await self._newsapi_ticker_news(ticker, limit)
+            source = "newsapi" if items else source
         if not items:
             items = await self._google_news_ticker_news(ticker, limit)
+            source = "google" if items else source
 
+        _logger.info("news.ticker ticker=%s served_by=%s count=%d", ticker, source or "none", len(items))
         _NEWS_CACHE.set(cache_key, items, ttl_seconds=self.settings.news_cache_ttl_seconds)
         return items
 
@@ -43,16 +73,22 @@ class NewsProvider:
         if cached is not None:
             return cached
 
-        items = await self._polygon_macro_news(limit)
-        if not items:
-            items = await self._openbb_macro_news(limit)
+        items = await _race_first_nonempty([
+            self._polygon_macro_news(limit),
+            self._openbb_macro_news(limit),
+        ])
+        source = "tier1" if items else None
         if not items:
             items = await self._alpha_vantage_macro_news(limit)
+            source = "alpha_vantage" if items else source
         if not items:
             items = await self._newsapi_macro_news(limit)
+            source = "newsapi" if items else source
         if not items:
             items = await self._google_news_macro_news(limit)
+            source = "google" if items else source
 
+        _logger.info("news.macro served_by=%s count=%d", source or "none", len(items))
         _NEWS_CACHE.set(cache_key, items, ttl_seconds=self.settings.news_cache_ttl_seconds)
         return items
 
