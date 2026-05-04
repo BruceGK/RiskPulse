@@ -9,7 +9,14 @@ export const metadata: Metadata = {
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   return (
     <html lang="en">
-      <body>{children}</body>
+      <body className="surface-light" suppressHydrationWarning>
+        <script
+          dangerouslySetInnerHTML={{
+            __html: `try{var m=localStorage.getItem("riskpulse_surface_mode")||"light";document.body.classList.toggle("surface-light",m!=="dark")}catch(e){document.body.classList.add("surface-light")}`
+          }}
+        />
+        {children}
+      </body>
     </html>
   );
 }
