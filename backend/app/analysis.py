@@ -37,6 +37,31 @@ class AnalysisService:
         self.sec = SecProvider(settings)
         self.ai = AiProvider(settings)
 
+    def _provider_status(self, quote_sources: dict[str, str] | None = None) -> dict[str, bool]:
+        """Truthful per-request provider status.
+
+        Green = the provider actually contributed to this analysis run, OR is a
+        passive provider whose configuration alone enables a capability (FRED/OpenAI/NewsAPI).
+        Grey  = the provider was either unconfigured OR silently failed.
+
+        Frontend renders one chip per key (after stripping any "_enabled" suffix).
+        """
+        served = self.openbb.fundamentals_served
+        market_sources_used = set((quote_sources or {}).values())
+        return {
+            # Market quote sources: green only if they actually served a quote.
+            "polygon": "polygon" in market_sources_used,
+            "fmp": served.get("fmp", 0) > 0 or "fmp" in market_sources_used,
+            "openbb": served.get("openbb", 0) > 0 or "openbb" in market_sources_used,
+            "yahoo": served.get("yahoo", 0) > 0 or bool(market_sources_used & {"yahoo", "yahoo_chart"}),
+            "alpha_vantage": served.get("alpha_vantage", 0) > 0,
+            # Passive providers: configuration is the right signal.
+            "fred": bool(self.settings.fred_api_key),
+            "newsapi": bool(self.settings.newsapi_api_key),
+            "tradingeconomics": bool(self.settings.trading_economics_api_key),
+            "openai": bool(self.settings.openai_api_key),
+        }
+
     async def analyze(self, req: AnalysisRequest, quick_mode: bool = False) -> AnalysisResponse:
         # Preserve user ticker priority so free-tier rate limits don't starve portfolio quotes.
         tickers = list(dict.fromkeys(p.ticker for p in req.positions))
@@ -106,17 +131,8 @@ class AnalysisService:
             data_quality = self._build_data_quality(req, position_rows, macro, news)
             signals = self._build_signals(position_rows, notes, news, risk, macro, behavioral, macro_events=[])
             meta_payload: dict = {
-                "providers": {
-                    "polygon_enabled": bool(self.settings.polygon_api_key),
-                    "fred_enabled": bool(self.settings.fred_api_key),
-                    "newsapi_enabled": bool(self.settings.newsapi_api_key),
-                    "fmp_enabled": bool(self.settings.fmp_api_key),
-                    "alpha_vantage_enabled": bool(self.settings.alpha_vantage_api_key),
-                    "openbb_enabled": bool(self.settings.openbb_base_url),
-                    "tradingeconomics_enabled": bool(self.settings.trading_economics_api_key),
-                    "yahoo_enabled": True,
-                    "openai_enabled": bool(self.settings.openai_api_key),
-                },
+                "providers": self._provider_status(quote_sources),
+                "fundamentalsAttribution": dict(self.openbb.fundamentals_attribution),
                 "quoteSources": quote_sources,
                 "dataQuality": data_quality,
                 "signals": signals,
@@ -196,17 +212,8 @@ class AnalysisService:
         )
         signals = self._merge_signals(deterministic_signals, ai_signals)
         meta_payload: dict = {
-            "providers": {
-                "polygon_enabled": bool(self.settings.polygon_api_key),
-                "fred_enabled": bool(self.settings.fred_api_key),
-                "newsapi_enabled": bool(self.settings.newsapi_api_key),
-                "fmp_enabled": bool(self.settings.fmp_api_key),
-                "alpha_vantage_enabled": bool(self.settings.alpha_vantage_api_key),
-                "openbb_enabled": bool(self.settings.openbb_base_url),
-                "tradingeconomics_enabled": bool(self.settings.trading_economics_api_key),
-                "yahoo_enabled": True,
-                "openai_enabled": bool(self.settings.openai_api_key),
-            },
+            "providers": self._provider_status(quote_sources),
+            "fundamentalsAttribution": dict(self.openbb.fundamentals_attribution),
             "quoteSources": quote_sources,
             "dataQuality": data_quality,
             "signals": signals,

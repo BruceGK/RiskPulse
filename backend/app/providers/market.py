@@ -160,16 +160,21 @@ class MarketProvider:
     async def _fetch_fmp_quotes(self, tickers: list[str]) -> dict[str, Quote]:
         if not self.settings.fmp_api_key:
             return {}
-        symbols = ",".join(tickers)
-        url = f"https://financialmodelingprep.com/api/v3/quote/{symbols}"
-        params = {"apikey": self.settings.fmp_api_key}
+        # FMP deprecated /api/v3/quote/{symbols} on Aug 31, 2025 for new accounts.
+        # Use the new /stable/batch-quote?symbols=A,B,C endpoint.
+        url = "https://financialmodelingprep.com/stable/batch-quote"
+        params = {"symbols": ",".join(tickers), "apikey": self.settings.fmp_api_key}
         try:
             async with httpx.AsyncClient(timeout=self.settings.request_timeout_seconds) as client:
                 resp = await client.get(url, params=params)
                 resp.raise_for_status()
                 data = resp.json()
+            if not isinstance(data, list):
+                return {}
             out: dict[str, Quote] = {}
             for item in data:
+                if not isinstance(item, dict):
+                    continue
                 symbol = (item.get("symbol") or "").upper()
                 price = item.get("price")
                 prev = item.get("previousClose")
@@ -182,6 +187,7 @@ class MarketProvider:
                     )
             return out
         except Exception:
+            _logger.warning("fmp.batch_quote_failed tickers=%s", ",".join(tickers))
             return {}
 
     async def _fetch_openbb_quotes(self, tickers: list[str]) -> dict[str, Quote]:
@@ -316,16 +322,23 @@ class MarketProvider:
     async def _fetch_fmp_history(self, ticker: str, days: int) -> list[float]:
         if not self.settings.fmp_api_key:
             return []
-        url = f"https://financialmodelingprep.com/api/v3/historical-price-full/{ticker}"
-        params = {"timeseries": max(days * 2, 180), "apikey": self.settings.fmp_api_key}
+        # /api/v3/historical-price-full/{ticker} is legacy. New endpoint:
+        # /stable/historical-price-eod/light?symbol=X returns [{date, price, volume}, ...]
+        # in reverse chronological order (newest first).
+        url = "https://financialmodelingprep.com/stable/historical-price-eod/light"
+        params = {"symbol": ticker, "apikey": self.settings.fmp_api_key}
         try:
             async with httpx.AsyncClient(timeout=self.settings.request_timeout_seconds) as client:
                 resp = await client.get(url, params=params)
                 resp.raise_for_status()
-                data = resp.json().get("historical", [])
-            closes = [float(item["close"]) for item in reversed(data) if item.get("close")]
+                data = resp.json()
+            if not isinstance(data, list):
+                return []
+            # Response is newest-first; reverse to oldest-first for downstream calcs.
+            closes = [float(item["price"]) for item in reversed(data) if isinstance(item, dict) and item.get("price")]
             return closes[-days:]
         except Exception:
+            _logger.warning("fmp.history_failed ticker=%s", ticker)
             return []
 
     async def _fetch_openbb_history(self, ticker: str, days: int) -> list[float]:
