@@ -13,33 +13,78 @@ on:
 jobs:
   warm:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - name: Warm daily brief cache
         env:
           RISKPULSE_API_URL: ${{ vars.RISKPULSE_API_URL }}
         run: |
+          set -u
           if [ -z "$RISKPULSE_API_URL" ]; then
             echo "Set repository variable RISKPULSE_API_URL to your public Static Web App URL to enable scheduled daily brief warming."
             exit 0
           fi
           BASE_URL="${RISKPULSE_API_URL%/}"
+          echo "Warming RiskPulse scheduled endpoints through: $BASE_URL"
+
           warm_endpoint() {
             NAME="$1"
             PATH="$2"
             OUT="/tmp/riskpulse-${NAME}.json"
-            STATUS=$(curl -sS -o "$OUT" -w "%{http_code}" "$BASE_URL$PATH" || true)
-            if [ "$STATUS" = "401" ]; then
-              echo "$NAME warm-up received 401."
-              echo "RISKPULSE_API_URL should be the public Static Web App URL, not the protected Container App URL."
-              echo "Example: https://red-hill-09659e10f.6.azurestaticapps.net"
-              exit 1
-            fi
-            if [ "$STATUS" -lt 200 ] || [ "$STATUS" -ge 300 ]; then
-              echo "$NAME warm-up failed with HTTP $STATUS"
+            URL="$BASE_URL$PATH"
+            ATTEMPT=1
+            MAX_ATTEMPTS=4
+            SLEEP_SECONDS=20
+
+            while [ "$ATTEMPT" -le "$MAX_ATTEMPTS" ]; do
+              echo "::group::Warm $NAME attempt $ATTEMPT/$MAX_ATTEMPTS"
+              START_TS=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+              STATUS=$(curl --fail-with-body --connect-timeout 15 --max-time 120 --retry 2 --retry-delay 5 --retry-all-errors -sS -o "$OUT" -w "%{http_code}" "$URL" || true)
+              END_TS=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+              echo "$NAME HTTP status: ${STATUS:-curl-error}"
+              echo "$NAME started: $START_TS"
+              echo "$NAME ended: $END_TS"
+
+              if [ "$STATUS" = "401" ]; then
+                echo "$NAME warm-up received 401."
+                echo "RISKPULSE_API_URL should be the public Static Web App URL, not the protected Container App URL."
+                echo "Example: https://red-hill-09659e10f.6.azurestaticapps.net"
+                cat "$OUT" || true
+                echo "::endgroup::"
+                return 1
+              fi
+
+              if [ "$STATUS" -ge 200 ] && [ "$STATUS" -lt 300 ]; then
+                echo "$NAME warmed successfully."
+                head -c 500 "$OUT" || true
+                echo
+                echo "::endgroup::"
+                return 0
+              fi
+
+              echo "$NAME warm-up failed with HTTP ${STATUS:-curl-error}."
               cat "$OUT" || true
-              exit 1
-            fi
-            echo "$NAME warmed through $BASE_URL"
+              echo "::endgroup::"
+
+              if [ "$ATTEMPT" -lt "$MAX_ATTEMPTS" ]; then
+                echo "Waiting ${SLEEP_SECONDS}s before retrying $NAME..."
+                sleep "$SLEEP_SECONDS"
+              fi
+              ATTEMPT=$((ATTEMPT + 1))
+              SLEEP_SECONDS=$((SLEEP_SECONDS * 2))
+            done
+
+            echo "$NAME failed after $MAX_ATTEMPTS attempts."
+            return 1
           }
-          warm_endpoint "daily-brief" "/api/daily-brief?force=true"
-          warm_endpoint "agent" "/api/agent?force=true"
+
+          FAILED=0
+          warm_endpoint "daily-brief" "/api/daily-brief?force=true" || FAILED=1
+          warm_endpoint "agent" "/api/agent?force=true" || FAILED=1
+
+          if [ "$FAILED" -ne 0 ]; then
+            echo "One or more Daily Analyst Desk warm-up endpoints failed."
+            exit 1
+          fi
+
+          echo "Daily Analyst Desk warm-up completed."
