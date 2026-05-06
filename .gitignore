@@ -14,3 +14,4 @@ build/
 coverage/
 mp3/
 transcripts/
+frontend/tsconfig.tsbuildinfo

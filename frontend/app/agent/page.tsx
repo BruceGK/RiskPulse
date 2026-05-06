@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 
 import TerminalTopNav from "@/app/components/TerminalTopNav";
-import { getInvestmentAgent } from "@/lib/api";
+import { getInvestmentAgent, peekInvestmentAgent } from "@/lib/api";
 import { STORAGE_KEY, assetTypeFor } from "@/lib/constants";
 import { label, num, pct as pctBase } from "@/lib/format";
 import type { AgentResponse, AgentSetup, Position } from "@/lib/types";
@@ -83,13 +83,14 @@ function SetupCard({ setup }: { setup: AgentSetup }) {
 
 export default function InvestmentAgentPage() {
   const router = useRouter();
-  const [agent, setAgent] = useState<AgentResponse | null>(null);
-  const [loading, setLoading] = useState(true);
+  // Hydrate from session cache so navigating back to this page is instant.
+  const [agent, setAgent] = useState<AgentResponse | null>(() => peekInvestmentAgent());
+  const [loading, setLoading] = useState(() => !peekInvestmentAgent());
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState("");
 
   const loadAgent = async (force = false) => {
-    if (force) setRefreshing(true);
+    if (force || agent) setRefreshing(true);
     else setLoading(true);
     setError("");
     try {
@@ -105,6 +106,7 @@ export default function InvestmentAgentPage() {
 
   useEffect(() => {
     loadAgent(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const allSetups = useMemo(() => agent?.setups || [], [agent]);

@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import TerminalTopNav from "@/app/components/TerminalTopNav";
-import { analyzePortfolio } from "@/lib/api";
+import { analyzePortfolio, peekAnalyze } from "@/lib/api";
 import { STORAGE_KEY } from "@/lib/constants";
 import {
   asNumber,
@@ -218,6 +218,9 @@ export default function AnalysisPage() {
   const [analysis, setAnalysis] = useState<AnalysisResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadPhase, setLoadPhase] = useState<"idle" | "quick" | "full">("idle");
+  // Background-fetch indicator: true while we revalidate cached data without
+  // hiding the screen behind a skeleton. Distinct from `loading` (cold start).
+  const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState("");
   const [refreshTick, setRefreshTick] = useState(0);
   const [activeScenario, setActiveScenario] = useState("");
@@ -412,25 +415,43 @@ export default function AnalysisPage() {
   useEffect(() => {
     if (positions.length === 0) return;
     let active = true;
+    const isManualRefresh = refreshTick > 0;
+    // Stale-while-revalidate: if we already have a fresh full result for these
+    // positions, render it instantly and skip the quick pass. Only show the
+    // skeleton state when there's truly nothing to display.
+    const cachedFull = isManualRefresh ? null : peekAnalyze({ positions }, "full");
     const run = async () => {
-      let quickLoaded = false;
-      try {
-        setLoading(true);
-        setLoadPhase("quick");
+      let quickLoaded = !!cachedFull;
+      if (cachedFull && active) {
+        setAnalysis(cachedFull);
         setError("");
-        const quickResponse = await analyzePortfolio({ positions }, { phase: "quick" });
-        if (active) {
-          setAnalysis(quickResponse);
-          quickLoaded = true;
+        setLoading(false);
+      }
+      // Run a quick pass only when we have no data on screen yet — that's the
+      // case where the user benefits from the incremental render.
+      if (!cachedFull) {
+        try {
+          setLoading(true);
+          setLoadPhase("quick");
+          setError("");
+          const quickResponse = await analyzePortfolio({ positions }, { phase: "quick" });
+          if (active) {
+            setAnalysis(quickResponse);
+            quickLoaded = true;
+          }
+        } catch (e) {
+          if (active) setError(`Quick pass failed, retrying full analysis... (${(e as Error).message})`);
         }
-      } catch (e) {
-        if (active) setError(`Quick pass failed, retrying full analysis... (${(e as Error).message})`);
       }
 
       if (!active) return;
       try {
         setLoadPhase("full");
-        const fullResponse = await analyzePortfolio({ positions }, { phase: "full" });
+        if (cachedFull || isManualRefresh) setRefreshing(true);
+        const fullResponse = await analyzePortfolio(
+          { positions },
+          { phase: "full", force: isManualRefresh },
+        );
         if (active) {
           setAnalysis(fullResponse);
           setError("");
@@ -446,6 +467,7 @@ export default function AnalysisPage() {
         if (active) {
           setLoading(false);
           setLoadPhase("idle");
+          setRefreshing(false);
         }
       }
     };
@@ -765,8 +787,8 @@ export default function AnalysisPage() {
         <button className="btn secondary terminal-top-action" onClick={handleShareView} disabled={!positions.length}>
           Share
         </button>
-        <button className="btn primary terminal-top-action" onClick={() => setRefreshTick((n) => n + 1)} disabled={loading || !positions.length}>
-          {loadPhase === "quick" ? "Quick Pass..." : loadPhase === "full" ? "Deep Pass..." : "Refresh"}
+        <button className="btn primary terminal-top-action" onClick={() => setRefreshTick((n) => n + 1)} disabled={loading || refreshing || !positions.length}>
+          {loadPhase === "quick" ? "Quick Pass..." : loadPhase === "full" ? "Deep Pass..." : refreshing ? "Refreshing..." : "Refresh"}
         </button>
       </TerminalTopNav>
 

@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 
 import TerminalTopNav from "@/app/components/TerminalTopNav";
-import { getDailyBrief } from "@/lib/api";
+import { getDailyBrief, peekDailyBrief } from "@/lib/api";
 import { STORAGE_KEY, assetTypeFor } from "@/lib/constants";
 import { money, pct } from "@/lib/format";
 import type { DailyBriefResponse, Position } from "@/lib/types";
@@ -20,13 +20,15 @@ function deskPositions(brief: DailyBriefResponse): Position[] {
 
 export default function DailyDeskPage() {
   const router = useRouter();
-  const [brief, setBrief] = useState<DailyBriefResponse | null>(null);
-  const [loading, setLoading] = useState(true);
+  // Hydrate from cache so we never show an empty skeleton when one is available
+  // (e.g. arriving from /agent which already warmed the daily-brief cache).
+  const [brief, setBrief] = useState<DailyBriefResponse | null>(() => peekDailyBrief());
+  const [loading, setLoading] = useState(() => !peekDailyBrief());
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState("");
 
   const loadBrief = async (force = false) => {
-    if (force) setRefreshing(true);
+    if (force || brief) setRefreshing(true);
     else setLoading(true);
     setError("");
     try {
@@ -42,6 +44,7 @@ export default function DailyDeskPage() {
 
   useEffect(() => {
     loadBrief(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const topPositions = useMemo(() => brief?.analysis.positions.slice(0, 6) || [], [brief]);
