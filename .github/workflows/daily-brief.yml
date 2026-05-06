@@ -16,22 +16,33 @@ jobs:
     timeout-minutes: 20
     steps:
       - name: Warm daily brief cache
+        shell: bash
         env:
           RISKPULSE_API_URL: ${{ vars.RISKPULSE_API_URL }}
         run: |
           set -u
+          for cmd in curl date sleep head cat; do
+            if ! command -v "$cmd" >/dev/null 2>&1; then
+              echo "Required command '$cmd' is unavailable on this runner."
+              exit 1
+            fi
+          done
+
           if [ -z "$RISKPULSE_API_URL" ]; then
             echo "Set repository variable RISKPULSE_API_URL to your public Static Web App URL to enable scheduled daily brief warming."
             exit 0
           fi
           BASE_URL="${RISKPULSE_API_URL%/}"
           echo "Warming RiskPulse scheduled endpoints through: $BASE_URL"
+          if [[ "$BASE_URL" == *".azurecontainerapps.io"* ]]; then
+            echo "::warning::RISKPULSE_API_URL is pointing at the Container App. If this endpoint is protected, scheduled warmups will return 401. Prefer the public Static Web App URL, e.g. https://red-hill-09659e10f.6.azurestaticapps.net"
+          fi
 
           warm_endpoint() {
             NAME="$1"
-            PATH="$2"
+            ENDPOINT_PATH="$2"
             OUT="/tmp/riskpulse-${NAME}.json"
-            URL="$BASE_URL$PATH"
+            URL="$BASE_URL$ENDPOINT_PATH"
             ATTEMPT=1
             MAX_ATTEMPTS=4
             SLEEP_SECONDS=20
