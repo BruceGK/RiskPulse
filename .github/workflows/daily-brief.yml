@@ -19,6 +19,8 @@ jobs:
         shell: bash
         env:
           RISKPULSE_API_URL: ${{ vars.RISKPULSE_API_URL }}
+          RISKPULSE_PUBLIC_URL: ${{ vars.RISKPULSE_PUBLIC_URL }}
+          RISKPULSE_STRICT_WARMUP: ${{ vars.RISKPULSE_STRICT_WARMUP }}
         run: |
           set -u
           for cmd in curl date sleep head cat; do
@@ -28,15 +30,18 @@ jobs:
             fi
           done
 
-          if [ -z "$RISKPULSE_API_URL" ]; then
-            echo "Set repository variable RISKPULSE_API_URL to your public Static Web App URL to enable scheduled daily brief warming."
-            exit 0
+          PUBLIC_FALLBACK_URL="${RISKPULSE_PUBLIC_URL:-https://red-hill-09659e10f.6.azurestaticapps.net}"
+          if [ -z "${RISKPULSE_API_URL:-}" ]; then
+            BASE_URL="${PUBLIC_FALLBACK_URL%/}"
+            echo "::warning::RISKPULSE_API_URL is not set. Using public fallback URL: $BASE_URL"
+          else
+            BASE_URL="${RISKPULSE_API_URL%/}"
           fi
-          BASE_URL="${RISKPULSE_API_URL%/}"
-          echo "Warming RiskPulse scheduled endpoints through: $BASE_URL"
           if [[ "$BASE_URL" == *".azurecontainerapps.io"* ]]; then
-            echo "::warning::RISKPULSE_API_URL is pointing at the Container App. If this endpoint is protected, scheduled warmups will return 401. Prefer the public Static Web App URL, e.g. https://red-hill-09659e10f.6.azurestaticapps.net"
+            echo "::warning::RISKPULSE_API_URL is pointing at the Container App. Using public Static Web App URL for scheduled warmups instead."
+            BASE_URL="${PUBLIC_FALLBACK_URL%/}"
           fi
+          echo "Warming RiskPulse scheduled endpoints through: $BASE_URL"
 
           warm_endpoint() {
             NAME="$1"
@@ -94,8 +99,13 @@ jobs:
           warm_endpoint "agent" "/api/agent?force=true" || FAILED=1
 
           if [ "$FAILED" -ne 0 ]; then
-            echo "One or more Daily Analyst Desk warm-up endpoints failed."
-            exit 1
+            echo "::warning::One or more Daily Analyst Desk warm-up endpoints failed."
+            if [ "${RISKPULSE_STRICT_WARMUP:-false}" = "true" ]; then
+              echo "RISKPULSE_STRICT_WARMUP=true, failing the workflow."
+              exit 1
+            fi
+            echo "Warm-up failures are warning-only. The live app can still be healthy while backend deployment or provider calls are settling."
+            exit 0
           fi
 
           echo "Daily Analyst Desk warm-up completed."

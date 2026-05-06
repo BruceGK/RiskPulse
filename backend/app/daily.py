@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from datetime import UTC, date, datetime
 from typing import Any
 
@@ -12,6 +13,7 @@ from app.providers.market import MarketProvider
 
 _DAILY_CACHE: dict[str, Any] = {}
 _DAILY_LOCK = asyncio.Lock()
+_logger = logging.getLogger("riskpulse.daily")
 
 
 class DailyBriefService:
@@ -35,20 +37,27 @@ class DailyBriefService:
                 return cached_payload
 
             universe = _daily_universe(self.settings.daily_brief_watchlist)
-            selected = await self._select_tickers(universe)
+            try:
+                selected = await asyncio.wait_for(
+                    self._select_tickers(universe),
+                    timeout=self.settings.daily_brief_selection_timeout_seconds,
+                )
+            except Exception:
+                _logger.exception("daily_brief.selection_failed")
+                selected = _fallback_selected(universe, self.settings.daily_brief_ticker_count)
             if not selected:
-                selected = [
-                    DailyBriefTicker(ticker=ticker, score=0.0, reason="Fallback core desk name.")
-                    for ticker in universe[: max(1, self.settings.daily_brief_ticker_count)]
-                ]
+                selected = _fallback_selected(universe, self.settings.daily_brief_ticker_count)
 
-            payload = AnalysisRequest(
-                positions=[
-                    PositionIn(ticker=row.ticker, qty=1, asset_type="etf" if row.ticker in {"SPY", "QQQ", "IWM", "SMH", "SOXX"} else "stock")
-                    for row in selected[: self.settings.daily_brief_ticker_count]
-                ]
-            )
-            analysis = await self.analysis.analyze(payload, quick_mode=False)
+            payload = _analysis_payload(selected[: self.settings.daily_brief_ticker_count])
+            try:
+                analysis = await asyncio.wait_for(
+                    self.analysis.analyze(payload, quick_mode=True),
+                    timeout=self.settings.daily_brief_analysis_timeout_seconds,
+                )
+            except Exception:
+                _logger.exception("daily_brief.analysis_failed_retrying_core")
+                selected = _fallback_selected(universe, min(3, self.settings.daily_brief_ticker_count))
+                analysis = await self.analysis.analyze(_analysis_payload(selected), quick_mode=True)
             headline, thesis, agenda = _brief_narrative(analysis.meta, selected)
             brief = DailyBriefResponse(
                 as_of=analysis.as_of,
@@ -157,6 +166,26 @@ def _daily_universe(raw: str) -> list[str]:
         if ticker and ticker not in out:
             out.append(ticker)
     return out or ["SPY", "QQQ", "NVDA", "MSFT", "AAPL", "META"]
+
+
+def _fallback_selected(universe: list[str], count: int) -> list[DailyBriefTicker]:
+    preferred = ["SPY", "QQQ", "NVDA", "MSFT", "AAPL", "META"]
+    ordered = [ticker for ticker in preferred if ticker in universe]
+    ordered.extend(ticker for ticker in universe if ticker not in ordered)
+    return [
+        DailyBriefTicker(ticker=ticker, score=0.0, reason="Fallback core desk name; provider scan was unavailable or too slow.")
+        for ticker in ordered[: max(1, count)]
+    ]
+
+
+def _analysis_payload(selected: list[DailyBriefTicker]) -> AnalysisRequest:
+    etfs = {"SPY", "QQQ", "IWM", "SMH", "SOXX"}
+    return AnalysisRequest(
+        positions=[
+            PositionIn(ticker=row.ticker, qty=1, asset_type="etf" if row.ticker in etfs else "stock")
+            for row in selected
+        ]
+    )
 
 
 def _period_return(prices: list[float], days: int) -> float | None:

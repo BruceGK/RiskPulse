@@ -26,6 +26,8 @@ class Settings(BaseSettings):
     daily_brief_watchlist: str = "SPY,QQQ,IWM,NVDA,MSFT,AAPL,META,AMZN,GOOGL,TSLA,AMD,AVGO,QCOM,MU,LLY"
     daily_brief_ticker_count: int = 6
     daily_brief_cache_ttl_seconds: int = 21600
+    daily_brief_selection_timeout_seconds: int = 8
+    daily_brief_analysis_timeout_seconds: int = 22
     agent_cache_ttl_seconds: int = 900
 
     polygon_api_key: str = ""
